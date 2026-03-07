@@ -4,14 +4,14 @@ from datetime import date, timedelta
 
 import streamlit as st
 import pandas as pd
-from streamlit_echarts import st_echarts, JsCode
+from streamlit_echarts import st_echarts
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import Config
 from data_fetcher import fetch_5min_kline
 from calculator import calculate_vpu
-from visualizer import render_chart, render_apu_chart
+from visualizer import render_chart, render_apu_chart, wrap_js_code
 
 st.set_page_config(
     page_title="VPU 流动性深度分析",
@@ -20,14 +20,15 @@ st.set_page_config(
 )
 
 
-def wrap_js_code(obj):
-    if isinstance(obj, dict):
-        return {k: wrap_js_code(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [wrap_js_code(item) for item in obj]
-    elif isinstance(obj, str) and obj.strip().startswith("function"):
-        return JsCode(obj)
-    return obj
+@st.cache_data(ttl=3600)
+def load_and_compute_data(code, start, end, cfg_dict):
+    raw_df = fetch_5min_kline(code, start, end)
+    if raw_df.empty:
+        return pd.DataFrame()
+
+    cfg = Config(**cfg_dict)
+    result_df = calculate_vpu(raw_df, cfg, code=code)
+    return result_df
 
 
 st.sidebar.title("参数设置")
@@ -56,8 +57,12 @@ st.title("VPU 流动性深度分析")
 if fetch_button:
     if not stock_code.strip():
         st.error("请输入有效的股票代码")
+        st.session_state.pop("result_df", None)
+        st.session_state.pop("stock_code", None)
     elif start_date >= end_date:
         st.error("开始日期必须早于结束日期")
+        st.session_state.pop("result_df", None)
+        st.session_state.pop("stock_code", None)
     else:
         cfg = Config(
             PRICE_UNIT=price_unit,
@@ -67,37 +72,27 @@ if fetch_button:
             ENABLE_DIRECTION=enable_direction,
         )
 
-        with st.spinner("正在获取数据..."):
-            try:
-                raw_df = fetch_5min_kline(
-                    stock_code.strip(),
-                    start_date.strftime("%Y-%m-%d"),
-                    end_date.strftime("%Y-%m-%d"),
-                )
+        try:
+            result_df = load_and_compute_data(
+                stock_code.strip(),
+                start_date.strftime("%Y-%m-%d"),
+                end_date.strftime("%Y-%m-%d"),
+                cfg.__dict__,
+            )
 
-                if raw_df.empty:
-                    st.error(
-                        f"未获取到股票 {stock_code} 的数据，请检查股票代码或日期范围"
-                    )
-                    st.session_state.pop("result_df", None)
-                    st.session_state.pop("stock_code", None)
-                else:
-                    result_df = calculate_vpu(raw_df, cfg, code=stock_code.strip())
-
-                    if result_df.empty:
-                        st.error("计算结果为空，请尝试扩大日期范围或调整参数")
-                        st.session_state.pop("result_df", None)
-                        st.session_state.pop("stock_code", None)
-                    else:
-                        st.session_state["result_df"] = result_df
-                        st.session_state["stock_code"] = stock_code.strip()
-                        st.success(f"成功获取 {len(result_df)} 个交易日的数据")
-
-            except Exception as e:
-                st.error(f"数据获取失败：{str(e)}")
+            if result_df.empty:
+                st.error(f"未获取到股票 {stock_code} 的数据，或计算结果为空")
                 st.session_state.pop("result_df", None)
                 st.session_state.pop("stock_code", None)
+            else:
+                st.session_state["result_df"] = result_df
+                st.session_state["stock_code"] = stock_code.strip()
+                st.success(f"成功获取 {len(result_df)} 个交易日的数据")
 
+        except Exception as e:
+            st.error(f"数据获取或计算失败：{str(e)}")
+            st.session_state.pop("result_df", None)
+            st.session_state.pop("stock_code", None)
 if "result_df" in st.session_state and "stock_code" in st.session_state:
     result_df = st.session_state["result_df"]
     code = st.session_state["stock_code"]

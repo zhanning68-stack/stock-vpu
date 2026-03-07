@@ -1,3 +1,19 @@
+import sys
+from unittest.mock import MagicMock
+
+
+class MockJsCode:
+    def __init__(self, js_code):
+        self.js_code = js_code
+
+
+# Mock streamlit_echarts before any other imports
+sys.modules["streamlit_echarts"] = MagicMock()
+import streamlit_echarts
+
+streamlit_echarts.JsCode = MockJsCode
+
+
 import math
 import os
 import tempfile
@@ -20,8 +36,23 @@ from calculator import (
     calculate_moving_averages,
     calculate_vpu,
 )
-from visualizer import render_chart, render_apu_chart, export_csv, export_png
+from visualizer import (
+    render_chart,
+    render_apu_chart,
+    export_csv,
+    export_png,
+    wrap_js_code,
+)
 from data_fetcher import fetch_5min_kline
+
+
+def test_wrap_js_code_in_visualizer():
+    test_dict = {"formatter": "function(params) { return 'test'; }"}
+    wrapped = wrap_js_code(test_dict)
+
+    assert "formatter" in wrapped
+    assert isinstance(wrapped["formatter"], MockJsCode)
+    assert wrapped["formatter"].js_code == "function(params) { return 'test'; }"
 
 
 TIMES_5MIN = [
