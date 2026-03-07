@@ -2,7 +2,7 @@ import math
 import os
 import tempfile
 from datetime import datetime, date, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -250,6 +250,8 @@ class TestExtractDate:
 
 
 class TestCleanData:
+    cfg: Config = Config()
+
     def setup_method(self):
         self.cfg = Config()
 
@@ -303,14 +305,14 @@ class TestCleanData:
         cfg = Config(MIN_VALID_UNITS=100, SKIP_FIRST_LAST=False)
         df = make_mock_kline(n_days=1, bars_per_day=20)
         result = clean_data(df, cfg)
-        assert result["insufficient_data"].all()
+        assert bool(result["insufficient_data"].all())
 
     def test_sufficient_data_not_marked(self):
         cfg = Config(MIN_VALID_UNITS=5, SKIP_FIRST_LAST=False)
         df = make_mock_kline(n_days=1, bars_per_day=20)
         result = clean_data(df, cfg)
         if not result.empty:
-            assert not result["insufficient_data"].all()
+            assert not bool(result["insufficient_data"].all())
 
     def test_688_limit_threshold(self):
         df = make_mock_kline(n_days=2, bars_per_day=20)
@@ -322,6 +324,8 @@ class TestCleanData:
 
 
 class TestCalculateUnitVpu:
+    cfg: Config = Config()
+
     def setup_method(self):
         self.cfg = Config()
 
@@ -535,6 +539,8 @@ class TestCalculateUnitVpu:
 
 
 class TestAggregateDaily:
+    cfg: Config = Config()
+
     def setup_method(self):
         self.cfg = Config()
 
@@ -586,7 +592,7 @@ class TestAggregateDaily:
     def test_vpu_is_trimmed_mean(self):
         df = self._make_day_bars(20)
         result = aggregate_daily(df, self.cfg)
-        expected = _trimmed_mean(df["vpu_i"], self.cfg.TRIM_RATIO)
+        expected = _trimmed_mean(pd.Series(df["vpu_i"]), self.cfg.TRIM_RATIO)
         assert result.iloc[0]["vpu"] == pytest.approx(expected)
 
     def test_vpu_up_down_split(self):
@@ -662,6 +668,8 @@ class TestAggregateDaily:
 
 
 class TestCalculateMovingAverages:
+    cfg: Config = Config()
+
     def setup_method(self):
         self.cfg = Config()
 
@@ -764,15 +772,15 @@ class TestDataFetcher:
         for i in range(n):
             rows.append(
                 {
-                    "时间": (base + timedelta(minutes=5 * i)).strftime(
+                    "day": (base + timedelta(minutes=5 * i)).strftime(
                         "%Y-%m-%d %H:%M:%S"
                     ),
-                    "开盘": 100.0 + i * 0.1,
-                    "收盘": 100.05 + i * 0.1,
-                    "最高": 100.10 + i * 0.1,
-                    "最低": 99.95 + i * 0.1,
-                    "成交量": 1000 + i * 100,
-                    "成交额": 100000 + i * 10000,
+                    "open": 100.0 + i * 0.1,
+                    "close": 100.05 + i * 0.1,
+                    "high": 100.10 + i * 0.1,
+                    "low": 99.95 + i * 0.1,
+                    "volume": 1000 + i * 100,
+                    "amount": 100000 + i * 10000,
                 }
             )
         return pd.DataFrame(rows)
@@ -783,13 +791,13 @@ class TestDataFetcher:
         for i in range(n):
             rows.append(
                 {
-                    "时间": (base + timedelta(minutes=5 * i)).strftime(
+                    "day": (base + timedelta(minutes=5 * i)).strftime(
                         "%Y-%m-%d %H:%M:%S"
                     ),
-                    "开盘": 101.0 + i * 0.1,
-                    "收盘": 101.05 + i * 0.1,
-                    "最高": 101.10 + i * 0.1,
-                    "最低": 100.95 + i * 0.1,
+                    "open": 101.0 + i * 0.1,
+                    "close": 101.05 + i * 0.1,
+                    "high": 101.10 + i * 0.1,
+                    "low": 100.95 + i * 0.1,
                 }
             )
         return pd.DataFrame(rows)
@@ -801,20 +809,20 @@ class TestDataFetcher:
             d = base + timedelta(days=i)
             rows.append(
                 {
-                    "日期": d.strftime("%Y-%m-%d"),
-                    "开盘": 99.0 + i,
-                    "收盘": 99.5 + i,
-                    "最高": 100.0 + i,
-                    "最低": 98.5 + i,
-                    "成交量": 50000,
-                    "成交额": 5000000,
+                    "date": d.strftime("%Y-%m-%d"),
+                    "open": 99.0 + i,
+                    "close": 99.5 + i,
+                    "high": 100.0 + i,
+                    "low": 98.5 + i,
+                    "volume": 50000,
+                    "amount": 5000000,
                 }
             )
         return pd.DataFrame(rows)
 
     @patch("data_fetcher.time.sleep")
-    @patch("data_fetcher.ak.stock_zh_a_hist")
-    @patch("data_fetcher.ak.stock_zh_a_hist_min_em")
+    @patch("data_fetcher.ak.stock_zh_a_daily")
+    @patch("data_fetcher.ak.stock_zh_a_minute")
     def test_column_renaming(self, mock_min, mock_daily, mock_sleep):
         unadj = self._make_unadjusted_df()
         adj = self._make_adjusted_df()
@@ -840,8 +848,8 @@ class TestDataFetcher:
         assert list(result.columns) == expected_cols
 
     @patch("data_fetcher.time.sleep")
-    @patch("data_fetcher.ak.stock_zh_a_hist")
-    @patch("data_fetcher.ak.stock_zh_a_hist_min_em")
+    @patch("data_fetcher.ak.stock_zh_a_daily")
+    @patch("data_fetcher.ak.stock_zh_a_minute")
     def test_prev_close_mapped(self, mock_min, mock_daily, mock_sleep):
         unadj = self._make_unadjusted_df()
         adj = self._make_adjusted_df()
@@ -851,25 +859,25 @@ class TestDataFetcher:
 
         result = fetch_5min_kline("000001", "2025-01-06", "2025-01-06")
         assert "prev_close" in result.columns
-        assert not result["prev_close"].isna().all()
+        assert not bool(result["prev_close"].isna().all())
 
     @patch("data_fetcher.time.sleep")
-    @patch("data_fetcher.ak.stock_zh_a_hist_min_em")
+    @patch("data_fetcher.ak.stock_zh_a_minute")
     def test_empty_when_no_data(self, mock_min, mock_sleep):
         mock_min.return_value = pd.DataFrame()
         result = fetch_5min_kline("000001", "2025-01-06", "2025-01-06")
         assert result.empty
 
     @patch("data_fetcher.time.sleep")
-    @patch("data_fetcher.ak.stock_zh_a_hist_min_em")
+    @patch("data_fetcher.ak.stock_zh_a_minute")
     def test_empty_on_none(self, mock_min, mock_sleep):
         mock_min.return_value = None
         result = fetch_5min_kline("000001", "2025-01-06", "2025-01-06")
         assert result.empty
 
     @patch("data_fetcher.time.sleep")
-    @patch("data_fetcher.ak.stock_zh_a_hist")
-    @patch("data_fetcher.ak.stock_zh_a_hist_min_em")
+    @patch("data_fetcher.ak.stock_zh_a_daily")
+    @patch("data_fetcher.ak.stock_zh_a_minute")
     def test_date_filtering(self, mock_min, mock_daily, mock_sleep):
         unadj = self._make_unadjusted_df()
         adj = self._make_adjusted_df()
@@ -883,7 +891,7 @@ class TestDataFetcher:
             assert (result["date"] <= pd.to_datetime("2025-01-07")).all()
 
     @patch("data_fetcher.time.sleep")
-    @patch("data_fetcher.ak.stock_zh_a_hist_min_em")
+    @patch("data_fetcher.ak.stock_zh_a_minute")
     def test_exception_returns_empty(self, mock_min, mock_sleep):
         mock_min.side_effect = Exception("network error")
         result = fetch_5min_kline("000001", "2025-01-06", "2025-01-06")
@@ -891,6 +899,8 @@ class TestDataFetcher:
 
 
 class TestVisualizer:
+    result_df: pd.DataFrame = pd.DataFrame()
+
     def setup_method(self):
         self.result_df = make_result_df(10)
 
