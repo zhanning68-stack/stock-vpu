@@ -170,13 +170,26 @@ APU 同理
 
 ### 5.3 图表工具
 
-**matplotlib** + **mplfinance**（或 **plotly** 如需交互式图表）
+- **Web端**：**streamlit-echarts** (基于 Apache ECharts)，支持高度定制化的交互与 JS 逻辑注入。
+- **导出端**：**matplotlib**，用于 CLI 环境下生成静态 PNG 报告。
 
 ---
 
-## 六、输入输出规格
+## 六、系统架构与输入输出
 
-### 6.1 输入界面（UI 方案：Streamlit 网页仪表盘）
+### 6.1 技术架构
+
+本项目采用 **双引擎渲染** 与 **高效缓存** 架构：
+
+1. **表现层 (app.py)**：基于 **Streamlit**。仅负责 UI 布局、状态路由与输入响应。
+2. **呈现层 (visualizer.py)**：封装所有图表渲染逻辑。
+   - 包含 `render_chart` 和 `render_apu_chart` 生成 ECharts 配置。
+   - 包含 `wrap_js_code` 工具函数，用于将 JavaScript 字符串包装为可执行代码（实现 Tooltip 的动态正值显示）。
+3. **性能层 (@st.cache_data)**：数据采集 (`akshare`) 与核心计算 (`calculate_vpu`) 逻辑被封装在带缓存的函数中。
+   - **TTL = 3600s**：相同参数的请求在一小时内直接返回缓存，极大减少 API 访问压力。
+   - **参数序列化**：通过对 `Config` 对象的哈希处理，确保参数变动能实时触发重算。
+
+### 6.2 输入界面 (Streamlit 网页仪表盘)
 
 为了方便在使用初期高频调试各项指标参数（如截尾比例、单位价差），推荐使用 **Streamlit** 构建一个轻量级的网页交互界面。
 

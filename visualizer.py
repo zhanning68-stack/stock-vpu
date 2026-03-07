@@ -2,6 +2,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
+from streamlit_echarts import JsCode
+
+
+def wrap_js_code(obj):
+    if isinstance(obj, dict):
+        return {k: wrap_js_code(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [wrap_js_code(item) for item in obj]
+    elif isinstance(obj, str) and obj.strip().startswith("function"):
+        return JsCode(obj)
+    return obj
 
 
 def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
