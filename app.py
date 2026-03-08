@@ -19,6 +19,26 @@ st.set_page_config(
     layout="wide",
 )
 
+st.markdown(
+    """
+<style>
+    [data-testid="stMetric"] {
+        background-color: #1e1e2e;
+        border: 1px solid #2a2a3e;
+        border-radius: 10px;
+        padding: 15px 20px;
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 0.9rem;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.8rem;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_data(ttl=3600)
 def load_and_compute_data(code, start, end, cfg_dict):
@@ -119,12 +139,14 @@ if "result_df" in st.session_state and "stock_code" in st.session_state:
         st.metric(
             label="平均 VPU_Up (抛压)",
             value=f"{avg_vpu_up:,.0f} 手" if not pd.isna(avg_vpu_up) else "N/A",
+            help="抛压指标",
         )
 
     with col3:
         st.metric(
             label="平均 VPU_Down (支撑)",
             value=f"{avg_vpu_down:,.0f} 手" if not pd.isna(avg_vpu_down) else "N/A",
+            help="支撑指标",
         )
 
     st.divider()
@@ -134,12 +156,12 @@ if "result_df" in st.session_state and "stock_code" in st.session_state:
     with tab1:
         option = render_chart(result_df, stock_code=code)
         option = wrap_js_code(option)
-        st_echarts(option, height="500px")
+        st_echarts(option, height="600px")
 
     with tab2:
         apu_option = render_apu_chart(result_df, stock_code=code)
         apu_option = wrap_js_code(apu_option)
-        st_echarts(apu_option, height="500px")
+        st_echarts(apu_option, height="600px")
 
     st.divider()
 
