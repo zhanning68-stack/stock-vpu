@@ -1,7 +1,7 @@
 # 股票流动性深度指标（VPU）— 设计方案
 
-> **版本**：v1.3（定稿）
-> **日期**：2026-03-07
+> **版本**：v1.4
+> **日期**：2026-03-08
 > **状态**：已确认
 
 ---
@@ -36,10 +36,18 @@ APU = 成交额（元） / max(1, ceil(未复权价差 / 0.05))
 
 ## 三、计算流程
 
-### 3.1 原始数据采集
+### 3.1 输入验证与数据采集
 
 ```
 输入：股票代码、起止日期（默认最近一个月）
+
+验证：股票代码须匹配 A 股格式（正则校验）
+  - 主板：600xxx, 000xxx, 001xxx, 002xxx, 003xxx
+  - 创业板：300xxx, 301xxx
+  - 科创板：688xxx
+  - 可选 sh/sz 前缀
+  无效代码在 CLI 和 Streamlit 入口处直接拦截，避免无效 API 调用。
+
 输出：该股票在指定时间范围内的5分钟K线数据（OHLCV + 成交额）
 ```
 
@@ -62,13 +70,13 @@ APU = 成交额（元） / max(1, ceil(未复权价差 / 0.05))
 
 ### 3.3 单元指标计算
 
-对每个有效5分钟单元，采用**离散化阶梯计算**避免小数放大效应：
+对每个有效5分钟单元，采用**离散化阶梯计算**避免小数放大效应（向量化实现，使用 `np.ceil().clip(lower=1)`）：
 
 ```
 价差 = 最高价 - 最低价
 
-# 离散化：不足1个单位算1个，超过则向上取整
-价差单位数 = max(1, ceil(价差 / 0.05))
+# 离散化：不足1个单位算1个，超过则向上取整（向量化）
+价差单位数 = clip(ceil(价差 / 0.05), min=1)
 
 # VPU（手数）使用复权价对应的价差计算（保持量价物理意义）
 VPU_i = 成交量 / 价差单位数
@@ -232,9 +240,10 @@ APU 同理
 |------|------|------|
 | 语言 | Python 3.10+ | 数据分析生态最成熟 |
 | 数据源 | AKShare（主）/ baostock（备） | 免费，5分钟K线可用 |
-| 数据处理 | pandas | 标准选择 |
+| 数据处理 | pandas + numpy | 标准选择，核心计算已向量化 |
 | 可视化 | Streamlit (UI 框架) + ECharts (网页图表) | 根据使用场景选择，交互性最强 |
 | 运行方式 | Streamlit App 或 CLI 脚本 | 均支持 |
+| CI | GitHub Actions | pytest 矩阵测试（Python 3.10/3.11/3.12） |
 
 ---
 
@@ -244,11 +253,15 @@ APU 同理
 stock-vpu/
 ├── app.py               # Streamlit 网页端入口 (UI界面及可视化)
 ├── main.py              # CLI 命令行入口 (自动化批量执行)
-├── data_fetcher.py      # 数据获取（AKShare/baostock 封装）
-├── calculator.py        # 核心计算（清洗、VPU/APU、截尾均值、均线）
-├── visualizer.py        # 图表绘制与导出
-├── config.py            # 常量配置（截尾比例、均线周期等）
-└── requirements.txt     # 依赖
+├── data_fetcher.py      # 数据获取（AKShare 封装，支持重试机制）
+├── calculator.py        # 核心计算（清洗、VPU/APU、截尾均值、均线，向量化实现）
+├── visualizer.py        # 图表渲染（ECharts配置生成、Matplotlib导出）
+├── config.py            # 常量配置、股票代码验证（validate_stock_code）
+├── requirements.txt     # 依赖清单
+├── test_vpu.py          # 单元测试（86 cases）
+├── .github/workflows/   # CI：GitHub Actions pytest 矩阵测试
+└── docs/                # 设计文档
+    └── plans/
 ```
 
 ---
