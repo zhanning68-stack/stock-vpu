@@ -1,6 +1,6 @@
 # 股票流动性深度指标（VPU）— 设计方案
 
-> **版本**：v1.5
+> **版本**：v1.7
 > **日期**：2026-03-08
 > **状态**：已确认
 
@@ -23,7 +23,40 @@ APU = 成交额（元） / max(1, ceil(未复权价差 / 0.05))
 
 ---
 
-## 二、数据源
+## 二、系统架构
+
+本项目采用模块化架构设计，解耦核心计算、数据获取、展示与外部接口。
+
+### 2.1 核心组件列表
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| **计算引擎** | `calculator.py` | 核心 VPU/APU 算法，数据清洗，向量化计算 |
+| **数据采集** | `data_fetcher.py` | 封装 AKShare，处理重试与网络异常 |
+| **验证中心** | `data_validator.py` | 股票代码校验、数据框（DataFrame）完整性验证 |
+| **可视化引擎** | `visualizer.py` | 基础 ECharts 联动配置生成，Matplotlib 静态导出 |
+| **高级可视化** | `advanced_visualizer.py` | 多股对比图、相关性热力图 |
+| **缓存管理** | `cache_manager.py` | 基于文件系统的持久化缓存，支持 TTL |
+| **导出中心** | `export_manager.py` | 支持 CSV, Excel, JSON, Parquet, HTML 等多格式导出 |
+| **日志系统** | `logger.py` | 统一的滚动日志记录（Console + File） |
+| **扩展系统** | `plugin_system.py` | 基于插件的扩展机制，支持动态添加分析维度 |
+| **技术分析** | `technical_analyzer.py` | 提供 RSI, MACD, Bollinger Bands 等辅助指标计算 |
+
+### 2.2 接口层
+
+1.  **Streamlit Web UI (`app.py`)**：面向用户的交互式工作台。
+2.  **CLI 工具 (`main.py`)**：面向开发者的命令行工具，支持自动化脚本。
+3.  **FastAPI Server (`api_server.py`)**：面向下游系统的 RESTful API 接口。
+4.  **Batch Processor (`batch_processor.py`)**：支持大规模股票池的并行/串行批量处理。
+
+### 2.3 部署形态
+
+- **本地运行**：直接运行 Python 脚本或 Streamlit 命令。
+- **容器化部署**：提供 Dockerfile 和 docker-compose.yml，支持一键部署 API 服务与 Web 界面。
+
+---
+
+## 三、数据源
 
 | 选项 | 推荐度 | 理由 |
 |------|--------|------|
@@ -158,16 +191,41 @@ APU 同理
 
 **视觉设计（双 Grid 结构）**：
 - **上方 Grid (60% 高度)**：
-  - **Candlestick**：展示每日开/高/低/收（阳线 `#ef5350`, 阴线 `#26a69a`）。
+  - **Candlestick**：展示每日开/高/低/收（阳线 `#ff4b4b`, 阴线 `#00c878`）。
   - **MA5/MA10**：叠加价格移动平均线。
 - **下方 Grid (30% 高度)**：
-  - **VPU 零轴对立柱**：`VPU_Up` 向上（红色渐变），`VPU_Down` 向下（绿色渐变）。
+  - **VPU 零轴对立柱**：`VPU_Up` 向上（红色渐变 `#ff4b4b→#ff8a8a`），`VPU_Down` 向下（绿色渐变 `#00c878→#66e0b0`）。
   - **样式优化**：柱体增加圆角及半透明渐变。
 
 **交互与联动**：
 - **轴联动 (Sync)**：通过 `axisPointer.link` 绑定两个 Grid 的 X 轴，缩放、平移其中一个，另一个自动同步。
-- **高级 Tooltip**：悬停时同时显示 OHLC 价格、涨跌幅及对应的 VPU 抛压/支撑数值。
+- **高级 Tooltip**：悬停时同时显示 OHLC 价格、涨跌幅及对应的 VPU 抛压/支撑数值。深色半透明背景 (`rgba(20,20,30,0.9)`)，浅色文字 (`#e0e0e0`)。
 - **DataZoom**：放置于最底部，同时控制上下两个区域的视图范围。
+
+### 5.1.1 UI 主题：深色量化终端
+
+**设计理念**：参照专业量化交易终端（Bloomberg Terminal、TradingView Dark）风格，使用深色背景提升图表可读性与视觉舒适度。
+
+**色彩体系**：
+
+| 元素 | 色值 | 说明 |
+|------|------|------|
+| 页面背景 | Streamlit 默认 `#0e1117` | 深色底色 |
+| 图表背景 | `transparent` | 融入页面背景 |
+| 阳线（涨） | `#ff4b4b` | 高对比度红色 |
+| 阴线（跌） | `#00c878` | 高对比度绿色 |
+| VPU_Up 柱体 | `#ff4b4b → #ff8a8a` 渐变 | 红色渐变抛压柱 |
+| VPU_Down 柱体 | `#00c878 → #66e0b0` 渐变 | 绿色渐变支撑柱 |
+| APU 柱体 | `#409eff` | 蓝色系 |
+| 标题文字 | `#e0e0e0` | 浅灰白 |
+| 坐标轴标签 | `#aaa` | 中灰 |
+| 分割线 | `rgba(255,255,255,0.06)` 虚线 | 极淡网格 |
+| Tooltip 背景 | `rgba(20,20,30,0.9)` | 深色半透明 |
+
+**Streamlit 组件样式**：
+- **指标卡片**：深色背景 (`#1e1e2e`)，细边框 (`#2a2a3e`)，圆角 `10px`
+- **图表高度**：`600px`（增大可视面积）
+- **指标说明**：通过 `help` 属性提供 tooltip 解释
 
 ### 5.2 副图（可选）：APU 成交额版本
 
@@ -241,7 +299,7 @@ APU 同理
 | 语言 | Python 3.10+ | 数据分析生态最成熟 |
 | 数据源 | AKShare（主）/ baostock（备） | 免费，5分钟K线可用 |
 | 数据处理 | pandas + numpy | 标准选择，核心计算已向量化 |
-| 可视化 | Streamlit (UI 框架) + ECharts (网页图表) | 根据使用场景选择，交互性最强 |
+| 可视化 | Streamlit (UI 框架) + ECharts (网页图表) | 深色量化终端主题，交互性最强 |
 | 运行方式 | Streamlit App 或 CLI 脚本 | 均支持 |
 | CI | GitHub Actions | pytest 矩阵测试（Python 3.10/3.11/3.12） |
 
@@ -251,17 +309,27 @@ APU 同理
 
 ```
 stock-vpu/
-├── app.py               # Streamlit 网页端入口 (UI界面及可视化)
-├── main.py              # CLI 命令行入口 (自动化批量执行)
-├── data_fetcher.py      # 数据获取（AKShare 封装，支持重试机制）
-├── calculator.py        # 核心计算（清洗、VPU/APU、截尾均值、均线，向量化实现）
-├── visualizer.py        # 图表渲染（ECharts配置生成、Matplotlib导出）
-├── config.py            # 常量配置、股票代码验证（validate_stock_code）
+├── app.py               # Streamlit 网页端入口
+├── main.py              # CLI 命令行入口
+├── api_server.py        # FastAPI 服务入口
+├── data_fetcher.py      # 数据获取模块
+├── calculator.py        # 核心计算引擎
+├── visualizer.py        # 基础可视化模块
+├── advanced_visualizer.py # 高级对比可视化
+├── data_validator.py    # 数据验证与市场识别
+├── cache_manager.py     # 持久化缓存管理
+├── export_manager.py    # 多格式导出管理
+├── logger.py            # 统一日志记录
+├── batch_processor.py   # 批量处理引擎
+├── plugin_system.py     # 插件扩展框架
+├── technical_analyzer.py # 辅助技术分析指标
+├── config.py            # 全局配置与参数定义
+├── Dockerfile           # 镜像构建脚本
+├── docker-compose.yml   # 容器编排配置
 ├── requirements.txt     # 依赖清单
-├── test_vpu.py          # 单元测试（86 cases）
-├── .github/workflows/   # CI：GitHub Actions pytest 矩阵测试
-└── docs/                # 设计文档
-    └── plans/
+├── test_vpu.py          # 单元测试
+├── .github/workflows/   # CI 工作流
+└── docs/                # 文档与设计方案
 ```
 
 ---

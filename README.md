@@ -10,14 +10,15 @@
 
 ## ✨ 功能特性
 
-- 📈 **双指标计算**：VPU（成交量版）+ APU（成交额版），满足不同分析场景
-- 🎯 **方向性分析**：区分上涨抛压（VPU_Up）与下跌支撑（VPU_Down），识别多空力量不对称
-- 🧹 **智能数据清洗**：自动剔除涨跌停日、首尾竞价时段、零价差等异常数据
-- 📊 **交互式可视化**：全新的 **K线融合视图**，主图展示价格行为（Candlestick），副图联动展示 VPU 流动性压力，支持缩放同步与高级 Tooltip 诊断
-- 🖥️ **双模式运行**：Streamlit 网页仪表盘 + 命令行 CLI，灵活适配不同场景
-- ✅ **输入验证**：股票代码格式校验，支持主板/中小板/创业板/科创板全覆盖
-- ⚡ **高效缓存**：1小时数据缓存，减少 API 调用压力
-- 📤 **数据导出**：支持 PNG 图表和 CSV 数据导出
+- 📈 **多维度指标**：VPU（成交量版）+ APU（成交额版）+ 方向性分析（VPU_Up/Down）
+- 📊 **交互式 K 线联动**：主图 K 线行为与副图流动性压力实时联动，支持专业暗色主题
+- 🚀 **企业级架构**：模块化设计，解耦计算、存储、验证与展示逻辑
+- 🌐 **RESTful API**：基于 FastAPI 提供高性能异步接口，支持下游系统集成
+- 🔄 **批量处理**：内置批量处理器，支持多股对比分析与相关性研究
+- 📂 **全格式导出**：支持 CSV, Excel, JSON, Parquet, HTML 等格式
+- ⚡ **智能缓存**：支持内存与文件双级缓存，TTL 可配，减少 API 调用压力
+- 🐳 **容器化**：提供 Docker 支持，一键部署生产级分析环境
+- ✅ **健壮性**：内置数据验证器，覆盖 A 股全市场，集成 GitHub Actions CI
 
 ---
 
@@ -32,16 +33,17 @@ pip install -r requirements.txt
 ### 方式一：Streamlit 网页仪表盘（推荐）
 
 ```bash
+# 启动 Web UI
 streamlit run app.py
 ```
 
-打开浏览器访问 `http://localhost:8501`，即可使用交互式界面：
+打开浏览器访问 `http://localhost:8501`，即可使用增强型交互界面：
 
-- 输入股票代码（如 `600519`）
-- 选择时间范围
-- 实时调节参数（最小价差单位、截尾比例等）
-- 查看 VPU/APU 双指标图表
-- 导出 CSV 数据
+- **核心看板**：实时计算 VPU/APU 指标，展示平均抛压（VPU_Up）与支撑（VPU_Down）。
+- **技术分析**：支持叠加 RSI、布林带等技术指标进行综合研判。
+- **多股对比**：支持输入多个股票代码，生成趋势对比图及相关性热力图。
+- **参数调优**：实时调节截尾比例、最小价差等核心算法参数。
+- **一键导出**：支持 CSV 数据直接下载。
 
 ### 方式二：命令行 CLI
 
@@ -49,23 +51,30 @@ streamlit run app.py
 # 查看帮助
 python main.py --help
 
-# 基础查询（默认最近30天）
+# 基础查询
 python main.py 600519
+```
 
-# 指定时间范围
-python main.py 600519 -s 2024-01-01 -e 2024-03-01
+### 方式三：FastAPI 接口服务
 
-# 导出 PNG 图表
-python main.py 600519 -o png --output-dir ./output
+```bash
+# 启动 API 服务
+python api_server.py
+```
 
-# 导出 CSV 数据
-python main.py 600519 -o csv --output-dir ./output
+访问 `http://localhost:8000/docs` 查看 Swagger 文档。支持 POST 请求计算 VPU：
 
-# 导出全部格式
-python main.py 600519 -o all
+```bash
+curl -X POST "http://localhost:8000/api/v1/calculate" \
+     -H "Content-Type: application/json" \
+     -d '{"code": "600519", "start_date": "2024-01-01", "end_date": "2024-03-01"}'
+```
 
-# 自定义参数
-python main.py 600519 --price-unit 0.05 --trim-ratio 0.25
+### 方式四：Docker 部署
+
+```bash
+# 使用 Docker Compose 一键启动 (Web + API)
+docker-compose up -d
 ```
 
 ---
@@ -122,20 +131,23 @@ APU = 成交额（元） / max(1, ceil(未复权价差 / 0.05))
 
 ```
 stock-vpu/
-├── app.py               # Streamlit 网页端入口 (UI界面及可视化)
-├── main.py              # CLI 命令行入口 (自动化批量执行)
-├── data_fetcher.py      # 数据获取（AKShare 封装，支持重试机制）
-├── calculator.py        # 核心计算（清洗、VPU/APU、截尾均值、均线）
-├── visualizer.py        # 图表渲染（ECharts配置生成、Matplotlib导出）
-├── config.py            # 常量配置、股票代码验证
-├── requirements.txt     # 依赖清单
-├── test_vpu.py          # 单元测试（86 cases）
-├── .github/workflows/   # CI：GitHub Actions pytest 矩阵测试
-└── docs/                # 设计文档
-    └── plans/
-        ├── 2026-03-07-refactor-plan.md
-        ├── 2026-03-07-visualization-implementation-plan.md
-        └── 2026-03-07-visualization-design.md
+├── app.py               # Streamlit 网页端
+├── main.py              # CLI 命令行工具
+├── api_server.py        # FastAPI 服务
+├── calculator.py        # 核心计算引擎
+├── data_fetcher.py      # 数据采集模块
+├── visualizer.py        # 基础可视化
+├── advanced_visualizer.py # 高级对比可视化
+├── data_validator.py    # 数据验证中心
+├── cache_manager.py     # 持久化缓存
+├── export_manager.py    # 导出中心
+├── logger.py            # 统一日志
+├── batch_processor.py   # 批量分析引擎
+├── plugin_system.py     # 插件扩展
+├── technical_analyzer.py # 技术分析指标
+├── config.py            # 全局配置
+├── Dockerfile           # 镜像构建
+└── docker-compose.yml   # 容器编排
 ```
 
 ---
@@ -146,7 +158,7 @@ stock-vpu/
 |------|------|------|
 | 数据源 | [AKShare](https://www.akshare.xyz/) | 免费开源，东财/新浪数据源，5分钟K线 |
 | 数据处理 | pandas | 数据清洗、分组聚合、时间序列处理 |
-| 可视化 | Streamlit + ECharts | 交互式网页图表 |
+| 可视化 | Streamlit + ECharts | 交互式网页图表（深色量化终端主题） |
 | 静态导出 | matplotlib | CLI 环境下生成 PNG 报告 |
 | 缓存 | @st.cache_data | 减少 API 调用，TTL=3600s |
 | CI | GitHub Actions | pytest 矩阵测试（Python 3.10/3.11/3.12） |
