@@ -15,6 +15,7 @@
 - 🧹 **智能数据清洗**：自动剔除涨跌停日、首尾竞价时段、零价差等异常数据
 - 📊 **交互式可视化**：基于 ECharts 的零轴对立柱状图，直观展示流动性压力
 - 🖥️ **双模式运行**：Streamlit 网页仪表盘 + 命令行 CLI，灵活适配不同场景
+- ✅ **输入验证**：股票代码格式校验，支持主板/中小板/创业板/科创板全覆盖
 - ⚡ **高效缓存**：1小时数据缓存，减少 API 调用压力
 - 📤 **数据导出**：支持 PNG 图表和 CSV 数据导出
 
@@ -126,9 +127,10 @@ stock-vpu/
 ├── data_fetcher.py      # 数据获取（AKShare 封装，支持重试机制）
 ├── calculator.py        # 核心计算（清洗、VPU/APU、截尾均值、均线）
 ├── visualizer.py        # 图表渲染（ECharts配置生成、Matplotlib导出）
-├── config.py            # 常量配置（数据类封装）
+├── config.py            # 常量配置、股票代码验证
 ├── requirements.txt     # 依赖清单
-├── test_vpu.py          # 单元测试
+├── test_vpu.py          # 单元测试（86 cases）
+├── .github/workflows/   # CI：GitHub Actions pytest 矩阵测试
 └── docs/                # 设计文档
     └── plans/
         ├── 2026-03-07-refactor-plan.md
@@ -147,6 +149,7 @@ stock-vpu/
 | 可视化 | Streamlit + ECharts | 交互式网页图表 |
 | 静态导出 | matplotlib | CLI 环境下生成 PNG 报告 |
 | 缓存 | @st.cache_data | 减少 API 调用，TTL=3600s |
+| CI | GitHub Actions | pytest 矩阵测试（Python 3.10/3.11/3.12） |
 
 ---
 
