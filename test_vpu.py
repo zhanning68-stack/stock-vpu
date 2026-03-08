@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from config import Config, config
+from config import Config, config, validate_stock_code
 from calculator import (
     _get_limit_threshold,
     _trimmed_mean,
@@ -1020,3 +1020,50 @@ class TestVisualizer:
             export_png(self.result_df, path, stock_code="600519")
             assert os.path.exists(path)
             assert os.path.getsize(path) > 0
+
+
+class TestValidateStockCode:
+    def test_main_board_600(self):
+        assert validate_stock_code("600519") is True
+
+    def test_main_board_000(self):
+        assert validate_stock_code("000001") is True
+
+    def test_main_board_001(self):
+        assert validate_stock_code("001289") is True
+
+    def test_sme_board_002(self):
+        assert validate_stock_code("002230") is True
+
+    def test_chinext_300(self):
+        assert validate_stock_code("300750") is True
+
+    def test_chinext_301(self):
+        assert validate_stock_code("301001") is True
+
+    def test_star_market_688(self):
+        assert validate_stock_code("688001") is True
+
+    def test_with_sh_prefix(self):
+        assert validate_stock_code("sh600519") is True
+
+    def test_with_sz_prefix(self):
+        assert validate_stock_code("sz000001") is True
+
+    def test_invalid_prefix(self):
+        assert validate_stock_code("999001") is False
+
+    def test_too_short(self):
+        assert validate_stock_code("6005") is False
+
+    def test_too_long(self):
+        assert validate_stock_code("6005199") is False
+
+    def test_letters_in_code(self):
+        assert validate_stock_code("60051a") is False
+
+    def test_empty_string(self):
+        assert validate_stock_code("") is False
+
+    def test_whitespace_trimmed(self):
+        assert validate_stock_code("  600519  ") is True

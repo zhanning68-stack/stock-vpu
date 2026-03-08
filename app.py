@@ -8,7 +8,7 @@ from streamlit_echarts import st_echarts
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import Config
+from config import Config, validate_stock_code
 from data_fetcher import fetch_5min_kline
 from calculator import calculate_vpu
 from visualizer import render_chart, render_apu_chart, wrap_js_code
@@ -57,6 +57,12 @@ st.title("VPU 流动性深度分析")
 if fetch_button:
     if not stock_code.strip():
         st.error("请输入有效的股票代码")
+        st.session_state.pop("result_df", None)
+        st.session_state.pop("stock_code", None)
+    elif not validate_stock_code(stock_code.strip()):
+        st.error(
+            f"股票代码 '{stock_code}' 格式不正确，支持: 600xxx, 000xxx, 001xxx, 002xxx, 300xxx, 301xxx, 688xxx"
+        )
         st.session_state.pop("result_df", None)
         st.session_state.pop("stock_code", None)
     elif start_date >= end_date:

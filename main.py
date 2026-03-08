@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
-from config import Config
+from config import Config, validate_stock_code
 from data_fetcher import fetch_5min_kline
 from calculator import calculate_vpu
 from visualizer import export_png, export_csv
@@ -72,6 +72,13 @@ def format_summary_table(result_df: pd.DataFrame) -> str:
 
 def main():
     args = parse_args()
+
+    if not validate_stock_code(args.code):
+        print(f"Error: Invalid stock code '{args.code}'")
+        print(
+            "Supported formats: 600xxx, 000xxx, 001xxx, 002xxx, 300xxx, 301xxx, 688xxx"
+        )
+        sys.exit(1)
 
     today = datetime.now().date()
     thirty_days_ago = today - timedelta(days=30)
