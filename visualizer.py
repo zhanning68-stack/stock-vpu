@@ -52,24 +52,28 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
     )
 
     return {
+        "backgroundColor": "transparent",
         "title": {
             "text": title_text,
             "left": "center",
-            "textStyle": {"color": "#333", "fontSize": 18},
+            "textStyle": {"color": "#e0e0e0", "fontSize": 20, "fontWeight": "bold"},
         },
         "tooltip": {
             "trigger": "axis",
             "axisPointer": {"type": "cross"},
             "formatter": tooltip_formatter,
+            "backgroundColor": "rgba(20,20,30,0.9)",
+            "borderColor": "#333",
+            "textStyle": {"color": "#e0e0e0"},
         },
         "legend": {
             "data": ["K线", "MA5", "MA10", "VPU_Up", "VPU_Down"],
             "top": 35,
-            "textStyle": {"color": "#555"},
+            "textStyle": {"color": "#aaa"},
         },
         "axisPointer": {
             "link": [{"xAxisIndex": "all"}],
-            "label": {"backgroundColor": "#777"},
+            "label": {"backgroundColor": "#555"},
         },
         "grid": [
             {"left": "10%", "right": "8%", "height": "50%", "top": "15%"},
@@ -85,6 +89,7 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "min": "dataMin",
                 "max": "dataMax",
                 "axisPointer": {"z": 100},
+                "axisLabel": {"color": "#aaa"},
             },
             {
                 "type": "category",
@@ -102,18 +107,27 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
         "yAxis": [
             {
                 "scale": True,
-                "splitArea": {"show": True},
                 "name": "价格 (元)",
-                "axisLabel": {"color": "#666"},
+                "axisLabel": {"color": "#aaa"},
+                "splitLine": {
+                    "lineStyle": {"color": "rgba(255,255,255,0.06)", "type": "dashed"}
+                },
             },
             {
                 "scale": True,
                 "gridIndex": 1,
                 "splitNumber": 2,
-                "axisLabel": {"show": True, "formatter": yaxis_label_formatter},
+                "axisLabel": {
+                    "show": True,
+                    "formatter": yaxis_label_formatter,
+                    "color": "#aaa",
+                },
                 "axisLine": {"show": False},
                 "axisTick": {"show": False},
-                "splitLine": {"show": True, "lineStyle": {"type": "dashed"}},
+                "splitLine": {
+                    "show": True,
+                    "lineStyle": {"type": "dashed", "color": "rgba(255,255,255,0.06)"},
+                },
                 "name": "VPU (手/0.05元)",
                 "nameLocation": "middle",
                 "nameGap": 40,
@@ -128,6 +142,11 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "top": "92%",
                 "start": 50,
                 "end": 100,
+                "backgroundColor": "rgba(255,255,255,0.05)",
+                "dataBackground": {
+                    "lineStyle": {"color": "#555"},
+                    "areaStyle": {"color": "rgba(255,255,255,0.1)"},
+                },
             },
         ],
         "series": [
@@ -136,10 +155,10 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "type": "candlestick",
                 "data": kline_data,
                 "itemStyle": {
-                    "color": "#ef232a",
-                    "color0": "#14b143",
-                    "borderColor": "#ef232a",
-                    "borderColor0": "#14b143",
+                    "color": "#ff4b4b",
+                    "color0": "#00c878",
+                    "borderColor": "#ff4b4b",
+                    "borderColor0": "#00c878",
                 },
             },
             {
@@ -148,7 +167,7 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "data": ma5,
                 "smooth": True,
                 "symbol": "none",
-                "lineStyle": {"opacity": 0.5, "color": "#e6a23c"},
+                "lineStyle": {"opacity": 0.8, "color": "#e6a23c", "width": 2},
             },
             {
                 "name": "MA10",
@@ -156,7 +175,7 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "data": ma10,
                 "smooth": True,
                 "symbol": "none",
-                "lineStyle": {"opacity": 0.5, "color": "#2f4554"},
+                "lineStyle": {"opacity": 0.8, "color": "#409eff", "width": 2},
             },
             {
                 "name": "VPU_Up",
@@ -172,8 +191,8 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                         "x2": 0,
                         "y2": 1,
                         "colorStops": [
-                            {"offset": 0, "color": "rgba(239, 83, 80, 0.8)"},
-                            {"offset": 1, "color": "rgba(239, 83, 80, 0.1)"},
+                            {"offset": 0, "color": "rgba(255, 75, 75, 0.7)"},
+                            {"offset": 1, "color": "rgba(255, 75, 75, 0.15)"},
                         ],
                     },
                     "borderRadius": [4, 4, 0, 0],
@@ -194,8 +213,8 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                         "x2": 0,
                         "y2": 1,
                         "colorStops": [
-                            {"offset": 0, "color": "rgba(38, 166, 154, 0.1)"},
-                            {"offset": 1, "color": "rgba(38, 166, 154, 0.8)"},
+                            {"offset": 0, "color": "rgba(0, 200, 120, 0.15)"},
+                            {"offset": 1, "color": "rgba(0, 200, 120, 0.7)"},
                         ],
                     },
                     "borderRadius": [0, 0, 4, 4],
@@ -231,19 +250,23 @@ def render_apu_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
     )
 
     return {
+        "backgroundColor": "transparent",
         "title": {
             "text": title_text,
-            "textStyle": {"color": "#333", "fontSize": 16},
+            "textStyle": {"color": "#e0e0e0", "fontSize": 18},
         },
         "tooltip": {
             "trigger": "axis",
             "axisPointer": {"type": "cross"},
             "formatter": tooltip_formatter,
+            "backgroundColor": "rgba(20,20,30,0.9)",
+            "borderColor": "#333",
+            "textStyle": {"color": "#e0e0e0"},
         },
         "legend": {
             "data": ["APU (成交额)", "收盘价"],
             "top": 40,
-            "textStyle": {"color": "#555"},
+            "textStyle": {"color": "#aaa"},
         },
         "grid": {
             "left": "3%",
@@ -257,7 +280,7 @@ def render_apu_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "type": "category",
                 "data": dates,
                 "axisTick": {"alignWithLabel": True},
-                "axisLabel": {"color": "#666"},
+                "axisLabel": {"color": "#aaa"},
             }
         ],
         "yAxis": [
@@ -265,14 +288,16 @@ def render_apu_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "type": "value",
                 "name": "APU (元/0.05元)",
                 "position": "left",
-                "axisLabel": {"color": "#666"},
-                "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
+                "axisLabel": {"color": "#aaa"},
+                "splitLine": {
+                    "lineStyle": {"type": "dashed", "color": "rgba(255,255,255,0.06)"}
+                },
             },
             {
                 "type": "value",
                 "name": "收盘价 (元)",
                 "position": "right",
-                "axisLabel": {"color": "#666"},
+                "axisLabel": {"color": "#aaa"},
                 "splitLine": {"show": False},
                 "scale": True,
             },
@@ -285,7 +310,7 @@ def render_apu_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
             {
                 "name": "APU (成交额)",
                 "type": "bar",
-                "itemStyle": {"color": "#5470c6", "opacity": 0.8},
+                "itemStyle": {"color": "#409eff", "opacity": 0.7},
                 "data": apu,
             },
             {
@@ -295,11 +320,11 @@ def render_apu_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "smooth": True,
                 "symbol": "circle",
                 "symbolSize": 6,
-                "lineStyle": {"color": "#333333", "width": 2, "type": "dashed"},
+                "lineStyle": {"color": "#e0e0e0", "width": 2, "type": "dashed"},
                 "itemStyle": {
-                    "color": "#333333",
+                    "color": "#e0e0e0",
                     "borderWidth": 2,
-                    "borderColor": "#fff",
+                    "borderColor": "#333",
                 },
                 "data": close_price,
             },
