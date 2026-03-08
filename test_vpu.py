@@ -165,6 +165,7 @@ def make_result_df(n_days=5):
     for i in range(n_days):
         d = base_date + timedelta(days=i)
         vpu = np.random.uniform(500, 2000)
+        price = round(100 + np.random.uniform(-2, 2), 2)
         rows.append(
             {
                 "date": d,
@@ -174,7 +175,11 @@ def make_result_df(n_days=5):
                 "apu": vpu * 100,
                 "ma5": vpu,
                 "ma10": vpu,
-                "close_price": round(100 + np.random.uniform(-2, 2), 2),
+                "open": price - 0.1,
+                "high": price + 0.2,
+                "low": price - 0.3,
+                "close": price,
+                "close_price": price,
                 "is_limit_up": False,
                 "is_limit_down": False,
                 "is_ex_dividend": False,
@@ -774,7 +779,7 @@ class TestCalculateVpuIntegration:
         cfg = Config(MIN_VALID_UNITS=5, SKIP_FIRST_LAST=False)
         df = make_mock_kline(n_days=3, bars_per_day=20)
         result = calculate_vpu(df, cfg)
-        expected_order = [
+        expected_cols = [
             "date",
             "vpu",
             "vpu_up",
@@ -782,12 +787,16 @@ class TestCalculateVpuIntegration:
             "apu",
             "ma5",
             "ma10",
+            "open",
+            "high",
+            "low",
+            "close",
             "close_price",
             "is_limit_up",
             "is_limit_down",
             "is_ex_dividend",
         ]
-        assert list(result.columns) == expected_order
+        assert list(result.columns) == expected_cols
 
     def test_vpu_values_positive(self):
         cfg = Config(MIN_VALID_UNITS=5, SKIP_FIRST_LAST=False)
@@ -942,7 +951,7 @@ class TestVisualizer:
         assert "yAxis" in chart
         assert "xAxis" in chart
         assert "tooltip" in chart
-        assert len(chart["series"]) == 4
+        assert len(chart["series"]) == 5
         assert "600519" in chart["title"]["text"]
 
     def test_render_chart_no_code(self):
@@ -952,10 +961,10 @@ class TestVisualizer:
     def test_render_chart_series_names(self):
         chart = render_chart(self.result_df, stock_code="600519")
         series_names = [s["name"] for s in chart["series"]]
-        assert "VPU_Up (抛压)" in series_names
-        assert "VPU_Down (支撑)" in series_names
+        assert "VPU_Up" in series_names
+        assert "VPU_Down" in series_names
         assert "MA5" in series_names
-        assert "收盘价" in series_names
+        assert "K线" in series_names
 
     def test_render_chart_data_length(self):
         chart = render_chart(self.result_df, stock_code="600519")

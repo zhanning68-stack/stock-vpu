@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+import matplotlib.patches as patches
 import numpy as np
 from streamlit_echarts import JsCode
 
@@ -20,11 +21,12 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
     vpu_up = result_df["vpu_up"].tolist()
     vpu_down = (-result_df["vpu_down"].abs()).tolist()
     ma5 = result_df["ma5"].tolist()
-    close_price = result_df["close_price"].tolist()
+    ma10 = result_df["ma10"].tolist()
 
-    title_text = (
-        f"VPU 流动性深度指标 — {stock_code}" if stock_code else "VPU 流动性深度指标"
-    )
+    # Candlestick data: [open, close, low, high]
+    kline_data = result_df[["open", "close", "low", "high"]].values.tolist()
+
+    title_text = f"VPU 深度分析 — {stock_code}" if stock_code else "VPU 深度分析"
 
     tooltip_formatter = (
         "function(params) {"
@@ -32,11 +34,14 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
         "  var html = '<b>' + date + '</b><br/>';"
         "  params.forEach(function(p) {"
         "    var val = p.value;"
-        "    if (p.seriesName === 'VPU_Down (支撑)') val = Math.abs(val);"
-        "    var display = (p.seriesName === '收盘价')"
-        "      ? ('¥ ' + val)"
-        "      : (val !== null ? val.toLocaleString() + ' 手' : '-');"
-        "    html += p.marker + ' ' + p.seriesName + ': ' + display + '<br/>';"
+        "    if (p.seriesName === 'VPU_Down') val = Math.abs(val);"
+        "    if (p.seriesName === 'K线') {"
+        "        var o = val[1], c = val[2], l = val[3], h = val[4];"
+        "        html += p.marker + ' 开: ' + o + ' 收: ' + c + ' 低: ' + l + ' 高: ' + h + '<br/>';"
+        "    } else {"
+        "        var display = (val !== null && val !== undefined) ? val.toLocaleString() + (p.seriesName.includes('VPU') ? ' 手' : '') : '-';"
+        "        html += p.marker + ' ' + p.seriesName + ': ' + display + '<br/>';"
+        "    }"
         "  });"
         "  return html;"
         "}"
@@ -49,7 +54,8 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
     return {
         "title": {
             "text": title_text,
-            "textStyle": {"color": "#333", "fontSize": 16},
+            "left": "center",
+            "textStyle": {"color": "#333", "fontSize": 18},
         },
         "tooltip": {
             "trigger": "axis",
@@ -57,86 +63,144 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
             "formatter": tooltip_formatter,
         },
         "legend": {
-            "data": ["VPU_Up (抛压)", "VPU_Down (支撑)", "MA5", "收盘价"],
-            "top": 40,
+            "data": ["K线", "MA5", "MA10", "VPU_Up", "VPU_Down"],
+            "top": 35,
             "textStyle": {"color": "#555"},
         },
-        "grid": {
-            "left": "3%",
-            "right": "4%",
-            "bottom": "12%",
-            "top": "15%",
-            "containLabel": True,
+        "axisPointer": {
+            "link": [{"xAxisIndex": "all"}],
+            "label": {"backgroundColor": "#777"},
         },
+        "grid": [
+            {"left": "10%", "right": "8%", "height": "50%", "top": "15%"},
+            {"left": "10%", "right": "8%", "top": "70%", "height": "20%"},
+        ],
         "xAxis": [
             {
                 "type": "category",
                 "data": dates,
-                "axisTick": {"alignWithLabel": True},
-                "axisLabel": {"color": "#666"},
-            }
+                "boundaryGap": True,
+                "axisLine": {"onZero": False},
+                "splitLine": {"show": False},
+                "min": "dataMin",
+                "max": "dataMax",
+                "axisPointer": {"z": 100},
+            },
+            {
+                "type": "category",
+                "gridIndex": 1,
+                "data": dates,
+                "boundaryGap": True,
+                "axisLine": {"onZero": False},
+                "axisTick": {"show": False},
+                "splitLine": {"show": False},
+                "axisLabel": {"show": False},
+                "min": "dataMin",
+                "max": "dataMax",
+            },
         ],
         "yAxis": [
             {
-                "type": "value",
-                "name": "VPU (手/0.05元)",
-                "position": "left",
-                "axisLabel": {
-                    "color": "#666",
-                    "formatter": yaxis_label_formatter,
-                },
-                "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
+                "scale": True,
+                "splitArea": {"show": True},
+                "name": "价格 (元)",
+                "axisLabel": {"color": "#666"},
             },
             {
-                "type": "value",
-                "name": "收盘价 (元)",
-                "position": "right",
-                "axisLabel": {"color": "#666"},
-                "splitLine": {"show": False},
                 "scale": True,
+                "gridIndex": 1,
+                "splitNumber": 2,
+                "axisLabel": {"show": True, "formatter": yaxis_label_formatter},
+                "axisLine": {"show": False},
+                "axisTick": {"show": False},
+                "splitLine": {"show": True, "lineStyle": {"type": "dashed"}},
+                "name": "VPU (手/0.05元)",
+                "nameLocation": "middle",
+                "nameGap": 40,
             },
         ],
         "dataZoom": [
-            {"type": "inside", "start": 0, "end": 100},
-            {"type": "slider", "bottom": 0, "height": 20},
+            {"type": "inside", "xAxisIndex": [0, 1], "start": 50, "end": 100},
+            {
+                "show": True,
+                "xAxisIndex": [0, 1],
+                "type": "slider",
+                "top": "92%",
+                "start": 50,
+                "end": 100,
+            },
         ],
         "series": [
             {
-                "name": "VPU_Up (抛压)",
-                "type": "bar",
-                "stack": "Total",
-                "itemStyle": {"color": "#eb5454", "opacity": 0.8},
-                "data": vpu_up,
-            },
-            {
-                "name": "VPU_Down (支撑)",
-                "type": "bar",
-                "stack": "Total",
-                "itemStyle": {"color": "#47b262", "opacity": 0.8},
-                "data": vpu_down,
+                "name": "K线",
+                "type": "candlestick",
+                "data": kline_data,
+                "itemStyle": {
+                    "color": "#ef232a",
+                    "color0": "#14b143",
+                    "borderColor": "#ef232a",
+                    "borderColor0": "#14b143",
+                },
             },
             {
                 "name": "MA5",
                 "type": "line",
+                "data": ma5,
                 "smooth": True,
                 "symbol": "none",
-                "lineStyle": {"color": "#e6a23c", "width": 3},
-                "data": ma5,
+                "lineStyle": {"opacity": 0.5, "color": "#e6a23c"},
             },
             {
-                "name": "收盘价",
+                "name": "MA10",
                 "type": "line",
-                "yAxisIndex": 1,
+                "data": ma10,
                 "smooth": True,
-                "symbol": "circle",
-                "symbolSize": 6,
-                "lineStyle": {"color": "#333333", "width": 2, "type": "dashed"},
+                "symbol": "none",
+                "lineStyle": {"opacity": 0.5, "color": "#2f4554"},
+            },
+            {
+                "name": "VPU_Up",
+                "type": "bar",
+                "xAxisIndex": 1,
+                "yAxisIndex": 1,
+                "stack": "Total",
                 "itemStyle": {
-                    "color": "#333333",
-                    "borderWidth": 2,
-                    "borderColor": "#fff",
+                    "color": {
+                        "type": "linear",
+                        "x": 0,
+                        "y": 0,
+                        "x2": 0,
+                        "y2": 1,
+                        "colorStops": [
+                            {"offset": 0, "color": "rgba(239, 83, 80, 0.8)"},
+                            {"offset": 1, "color": "rgba(239, 83, 80, 0.1)"},
+                        ],
+                    },
+                    "borderRadius": [4, 4, 0, 0],
                 },
-                "data": close_price,
+                "data": vpu_up,
+            },
+            {
+                "name": "VPU_Down",
+                "type": "bar",
+                "xAxisIndex": 1,
+                "yAxisIndex": 1,
+                "stack": "Total",
+                "itemStyle": {
+                    "color": {
+                        "type": "linear",
+                        "x": 0,
+                        "y": 0,
+                        "x2": 0,
+                        "y2": 1,
+                        "colorStops": [
+                            {"offset": 0, "color": "rgba(38, 166, 154, 0.1)"},
+                            {"offset": 1, "color": "rgba(38, 166, 154, 0.8)"},
+                        ],
+                    },
+                    "borderRadius": [0, 0, 4, 4],
+                },
+                "data": vpu_down,
             },
         ],
     }
@@ -248,46 +312,56 @@ def export_png(result_df: pd.DataFrame, output_path: str, stock_code: str = "") 
     vpu_up = result_df["vpu_up"].values
     vpu_down = result_df["vpu_down"].abs().values
     ma5 = result_df["ma5"].values
-    close_price = result_df["close_price"].values
+    ma10 = result_df["ma10"].values
+
+    # [open, close, low, high]
+    opens = result_df["open"].values
+    closes = result_df["close"].values
+    highs = result_df["high"].values
+    lows = result_df["low"].values
 
     x = np.arange(len(dates))
 
-    fig, ax1 = plt.subplots(figsize=(14, 8))
-    ax2 = ax1.twinx()
-
-    ax1.bar(x, vpu_up, color="#eb5454", alpha=0.8, label="VPU_Up (抛压)")
-    ax1.bar(x, -vpu_down, color="#47b262", alpha=0.8, label="VPU_Down (支撑)")
-    ax1.plot(x, ma5, color="#e6a23c", linewidth=2.5, label="MA5", zorder=5)
-    ax1.axhline(0, color="#aaa", linewidth=0.8)
-
-    ax2.plot(
-        x,
-        close_price,
-        color="#333333",
-        linewidth=2,
-        linestyle="--",
-        label="收盘价",
-        zorder=4,
+    fig, (ax1, ax3) = plt.subplots(
+        2, 1, figsize=(14, 10), gridspec_kw={"height_ratios": [2, 1]}, sharex=True
     )
 
-    tick_step = max(1, len(dates) // 20)
-    ax1.set_xticks(x[::tick_step])
-    ax1.set_xticklabels(dates[::tick_step], rotation=45, ha="right", fontsize=8)
-    ax1.yaxis.set_major_formatter(
-        mticker.FuncFormatter(lambda v, _: f"{abs(int(v)):,}")
-    )
+    # Plot Candlestick on ax1
+    # Use rectangles for candle bodies
+    for i in range(len(x)):
+        color = "#ef5350" if closes[i] >= opens[i] else "#26a69a"
+        # Wick
+        ax1.vlines(x[i], lows[i], highs[i], color=color, linewidth=1)
+        # Body
+        lower = min(opens[i], closes[i])
+        height = abs(opens[i] - closes[i])
+        if height == 0:
+            height = 0.01  # visualization fix
+        rect = patches.Rectangle((x[i] - 0.3, lower), 0.6, height, color=color)
+        ax1.add_patch(rect)
 
-    ax1.set_ylabel("VPU (手/0.05元)", color="#333")
-    ax2.set_ylabel("收盘价 (元)", color="#333")
+    ax1.plot(x, ma5, color="#e6a23c", linewidth=1.5, label="MA5", alpha=0.7)
+    ax1.plot(x, ma10, color="#2f4554", linewidth=1.5, label="MA10", alpha=0.7)
 
-    title = f"VPU 流动性深度指标 — {stock_code}" if stock_code else "VPU 流动性深度指标"
-    ax1.set_title(title, fontsize=14, pad=12)
+    ax1.set_ylabel("价格 (元)")
+    title = f"VPU 深度分析 — {stock_code}" if stock_code else "VPU 深度分析"
+    ax1.set_title(title, fontsize=14)
+    ax1.legend(loc="upper left")
+    ax1.grid(alpha=0.3)
 
-    handles1, labels1 = ax1.get_legend_handles_labels()
-    handles2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(handles1 + handles2, labels1 + labels2, loc="upper left", framealpha=0.9)
+    # Plot VPU on ax3
+    ax3.bar(x, vpu_up, color="#ef5350", alpha=0.6, label="VPU_Up")
+    ax3.bar(x, -vpu_down, color="#26a69a", alpha=0.6, label="VPU_Down")
+    ax3.axhline(0, color="black", linewidth=0.5)
 
-    ax1.grid(axis="y", linestyle="--", alpha=0.4)
+    ax3.set_ylabel("VPU (手)")
+    ax3.legend(loc="upper left")
+    ax3.grid(alpha=0.3)
+
+    tick_step = max(1, len(dates) // 15)
+    ax3.set_xticks(x[::tick_step])
+    ax3.set_xticklabels(dates[::tick_step], rotation=45, ha="right")
+
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)
     plt.close(fig)

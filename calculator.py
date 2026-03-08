@@ -168,11 +168,11 @@ def aggregate_daily(
                 vpu_down = _trimmed_mean(down_bars, config.TRIM_RATIO)
 
         close_price = day_group.iloc[-1]["close"]
-
-        prev_close = day_group.iloc[0]["prev_close"]
+        open_price = day_group.iloc[0]["open"]
         daily_high = day_group["high"].max()
         daily_low = day_group["low"].min()
 
+        prev_close = day_group.iloc[0]["prev_close"]
         threshold = _get_limit_threshold(code, is_st)
         is_limit_up = (daily_high - prev_close) / prev_close > threshold
         is_limit_down = (daily_low - prev_close) / prev_close < -threshold
@@ -184,7 +184,11 @@ def aggregate_daily(
                 "vpu_up": vpu_up,
                 "vpu_down": vpu_down,
                 "apu": apu,
-                "close_price": close_price,
+                "open": open_price,
+                "high": daily_high,
+                "low": daily_low,
+                "close": close_price,
+                "close_price": close_price,  # Keep for backward compatibility
                 "is_limit_up": is_limit_up,
                 "is_limit_down": is_limit_down,
                 "is_ex_dividend": False,
@@ -238,6 +242,10 @@ def calculate_vpu(
         "apu",
         "ma5",
         "ma10",
+        "open",
+        "high",
+        "low",
+        "close",
         "close_price",
         "is_limit_up",
         "is_limit_down",
