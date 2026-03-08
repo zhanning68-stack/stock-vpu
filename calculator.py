@@ -110,12 +110,12 @@ def calculate_unit_vpu(df: pd.DataFrame, config) -> pd.DataFrame:
     adj_spread_valid = df.loc[valid_mask, "adj_spread"]
     raw_spread_valid = df.loc[valid_mask, "raw_spread"]
 
-    df.loc[valid_mask, "adj_units"] = adj_spread_valid.apply(
-        lambda s: max(1, math.ceil(s / config.PRICE_UNIT))
-    )
-    df.loc[valid_mask, "raw_units"] = raw_spread_valid.apply(
-        lambda s: max(1, math.ceil(s / config.PRICE_UNIT))
-    )
+    df.loc[valid_mask, "adj_units"] = np.ceil(
+        adj_spread_valid / config.PRICE_UNIT
+    ).clip(lower=1)
+    df.loc[valid_mask, "raw_units"] = np.ceil(
+        raw_spread_valid / config.PRICE_UNIT
+    ).clip(lower=1)
 
     df.loc[valid_mask, "vpu_i"] = (
         df.loc[valid_mask, "volume"] / df.loc[valid_mask, "adj_units"]
