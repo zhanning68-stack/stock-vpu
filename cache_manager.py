@@ -1,9 +1,9 @@
+import contextlib
 import hashlib
-import pickle
 import os
+import pickle
 import time
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 
 class CacheManager:
@@ -20,7 +20,7 @@ class CacheManager:
         key_str = "_".join(f"{k}:{v}" for k, v in sorted(kwargs.items()))
         return hashlib.md5(key_str.encode()).hexdigest()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         cache_path = self._get_cache_path(key)
         if os.path.exists(cache_path):
             mtime = os.path.getmtime(cache_path)
@@ -28,24 +28,19 @@ class CacheManager:
                 try:
                     with open(cache_path, "rb") as f:
                         return pickle.load(f)
-                except (pickle.PickleError, EOFError, IOError):
+                except (OSError, pickle.PickleError, EOFError):
                     return None
         return None
 
     def set(self, key: str, data: Any):
         cache_path = self._get_cache_path(key)
-        try:
-            with open(cache_path, "wb") as f:
-                pickle.dump(data, f)
-        except (pickle.PickleError, IOError):
-            pass
+        with contextlib.suppress(OSError, pickle.PickleError), open(cache_path, "wb") as f:
+            pickle.dump(data, f)
 
     def clear_expired(self):
         for filename in os.listdir(self.cache_dir):
             if filename.endswith(".pkl"):
                 path = os.path.join(self.cache_dir, filename)
                 if (time.time() - os.path.getmtime(path)) > self.ttl_seconds:
-                    try:
+                    with contextlib.suppress(OSError):
                         os.remove(path)
-                    except OSError:
-                        pass

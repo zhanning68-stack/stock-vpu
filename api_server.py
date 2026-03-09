@@ -1,11 +1,11 @@
+from datetime import datetime
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional, Dict
-from datetime import datetime
-import pandas as pd
+
+from calculator import calculate_vpu
 from config import Config
 from data_fetcher import fetch_5min_kline
-from calculator import calculate_vpu
 from logger import logger
 
 app = FastAPI(title="Stock-VPU API", version="1.0.0")
@@ -30,9 +30,7 @@ async def calculate_vpu_api(request: StockRequest):
         logger.info(f"API request for {request.code}")
         df = fetch_5min_kline(request.code, request.start_date, request.end_date)
         if df.empty:
-            raise HTTPException(
-                status_code=404, detail=f"No data found for {request.code}"
-            )
+            raise HTTPException(status_code=404, detail=f"No data found for {request.code}")
 
         cfg = Config(PRICE_UNIT=request.price_unit, TRIM_RATIO=request.trim_ratio)
         result_df = calculate_vpu(df, cfg, code=request.code)
@@ -43,7 +41,7 @@ async def calculate_vpu_api(request: StockRequest):
         raise
     except Exception as e:
         logger.error(f"API Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @app.get("/api/v1/health")

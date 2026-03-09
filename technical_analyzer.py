@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 
 
 class TechnicalAnalyzer:
@@ -14,9 +13,7 @@ class TechnicalAnalyzer:
         return rsi
 
     @staticmethod
-    def calculate_bollinger_bands(
-        df: pd.DataFrame, period: int = 20, std_dev: float = 2.0
-    ):
+    def calculate_bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2.0):
         sma = df["close"].rolling(window=period).mean()
         std = df["close"].rolling(window=period).std()
         upper_band = sma + (std * std_dev)
@@ -24,9 +21,7 @@ class TechnicalAnalyzer:
         return sma, upper_band, lower_band
 
     @staticmethod
-    def calculate_macd(
-        df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9
-    ):
+    def calculate_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9):
         exp1 = df["close"].ewm(span=fast, adjust=False).mean()
         exp2 = df["close"].ewm(span=slow, adjust=False).mean()
         macd = exp1 - exp2

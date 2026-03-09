@@ -1,21 +1,20 @@
-import sys
 import os
+import sys
 from datetime import date, timedelta
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 from streamlit_echarts import st_echarts
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from advanced_visualizer import AdvancedVisualizer
+from batch_processor import BatchProcessor
+from calculator import calculate_vpu
 from config import Config, validate_stock_code
 from data_fetcher import fetch_5min_kline
-from calculator import calculate_vpu
-from visualizer import render_chart, render_apu_chart, wrap_js_code
-from batch_processor import BatchProcessor
-from advanced_visualizer import AdvancedVisualizer
 from technical_analyzer import TechnicalAnalyzer
-from export_manager import ExportManager
+from visualizer import render_apu_chart, render_chart, wrap_js_code
 
 st.set_page_config(
     page_title="VPU 流动性深度分析",
@@ -67,9 +66,7 @@ end_date = st.sidebar.date_input("结束日期", value=today)
 
 price_unit = st.sidebar.slider("PRICE_UNIT (最小价差单位)", 0.01, 0.10, 0.05, 0.01)
 trim_ratio = st.sidebar.slider("TRIM_RATIO (截尾比例)", 0.0, 0.40, 0.25, 0.05)
-min_price_spread = st.sidebar.slider(
-    "MIN_PRICE_SPREAD (最小有效价差)", 0.01, 0.10, 0.03, 0.01
-)
+min_price_spread = st.sidebar.slider("MIN_PRICE_SPREAD (最小有效价差)", 0.01, 0.10, 0.03, 0.01)
 
 skip_first_last = st.sidebar.checkbox("跳过首尾5分钟", value=True)
 enable_direction = st.sidebar.checkbox("计算方向性指标", value=True)
@@ -84,9 +81,7 @@ if fetch_button:
         st.session_state.pop("result_df", None)
         st.session_state.pop("stock_code", None)
     elif not validate_stock_code(stock_code.strip()):
-        st.error(
-            f"股票代码 '{stock_code}' 格式不正确，支持: 600xxx, 000xxx, 001xxx, 002xxx, 300xxx, 301xxx, 688xxx"
-        )
+        st.error(f"股票代码 '{stock_code}' 格式不正确，支持: 600xxx, 000xxx, 001xxx, 002xxx, 300xxx, 301xxx, 688xxx")
         st.session_state.pop("result_df", None)
         st.session_state.pop("stock_code", None)
     elif start_date >= end_date:
@@ -120,7 +115,7 @@ if fetch_button:
                 st.success(f"成功获取 {len(result_df)} 个交易日的数据")
 
         except Exception as e:
-            st.error(f"数据获取或计算失败：{str(e)}")
+            st.error(f"数据获取或计算失败：{e!s}")
             st.session_state.pop("result_df", None)
             st.session_state.pop("stock_code", None)
 if "result_df" in st.session_state and "stock_code" in st.session_state:
@@ -178,9 +173,7 @@ if "result_df" in st.session_state and "stock_code" in st.session_state:
 
     with tab3:
         st.subheader("多股票对比")
-        compare_codes = st.text_input(
-            "输入要对比的股票代码（英文逗号分隔）", value="600519,000858,000568"
-        )
+        compare_codes = st.text_input("输入要对比的股票代码（英文逗号分隔）", value="600519,000858,000568")
         if st.button("开始对比"):
             code_list = [c.strip() for c in compare_codes.split(",") if c.strip()]
             if code_list:
@@ -200,14 +193,10 @@ if "result_df" in st.session_state and "stock_code" in st.session_state:
                     )
                     comp_df = bp.get_comparison_df(batch_results, metric="vpu")
                     if not comp_df.empty:
-                        c_option = AdvancedVisualizer.render_comparison_chart(
-                            comp_df, title="VPU 趋势对比"
-                        )
+                        c_option = AdvancedVisualizer.render_comparison_chart(comp_df, title="VPU 趋势对比")
                         st_echarts(c_option, height="500px")
 
-                        corr_option = AdvancedVisualizer.render_correlation_matrix(
-                            comp_df
-                        )
+                        corr_option = AdvancedVisualizer.render_correlation_matrix(comp_df)
                         st_echarts(corr_option, height="500px")
                     else:
                         st.warning("未能获取足够的对比数据")

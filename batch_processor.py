@@ -1,7 +1,9 @@
+from typing import Any
+
 import pandas as pd
-from typing import List, Dict, Optional, Any
-from data_fetcher import fetch_5min_kline
+
 from calculator import calculate_vpu
+from data_fetcher import fetch_5min_kline
 from logger import logger
 
 
@@ -9,9 +11,7 @@ class BatchProcessor:
     def __init__(self, config: Any):
         self.config = config
 
-    def process_stocks(
-        self, stock_list: List[str], start_date: str, end_date: str
-    ) -> Dict[str, pd.DataFrame]:
+    def process_stocks(self, stock_list: list[str], start_date: str, end_date: str) -> dict[str, pd.DataFrame]:
         results = {}
         for code in stock_list:
             try:
@@ -28,9 +28,7 @@ class BatchProcessor:
                 results[code] = pd.DataFrame()
         return results
 
-    def get_comparison_df(
-        self, results: Dict[str, pd.DataFrame], metric: str = "vpu"
-    ) -> pd.DataFrame:
+    def get_comparison_df(self, results: dict[str, pd.DataFrame], metric: str = "vpu") -> pd.DataFrame:
         comparison_data = []
         for code, df in results.items():
             if not df.empty:

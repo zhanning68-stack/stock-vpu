@@ -1,6 +1,7 @@
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import List, Dict, Union, Any
 
 
 def _get_limit_threshold(code: str, is_st: bool = False) -> float:
@@ -70,16 +71,12 @@ def clean_data(
         .reset_index()
     )
 
-    daily_stats["up_pct"] = (
-        daily_stats["daily_high"] - daily_stats["prev_close"]
-    ) / daily_stats["prev_close"]
-    daily_stats["down_pct"] = (
-        daily_stats["daily_low"] - daily_stats["prev_close"]
-    ) / daily_stats["prev_close"]
+    daily_stats["up_pct"] = (daily_stats["daily_high"] - daily_stats["prev_close"]) / daily_stats["prev_close"]
+    daily_stats["down_pct"] = (daily_stats["daily_low"] - daily_stats["prev_close"]) / daily_stats["prev_close"]
 
-    limit_days = daily_stats[
-        (daily_stats["up_pct"] > threshold) | (daily_stats["down_pct"] < -threshold)
-    ]["_trade_date"].tolist()
+    limit_days = daily_stats[(daily_stats["up_pct"] > threshold) | (daily_stats["down_pct"] < -threshold)][
+        "_trade_date"
+    ].tolist()
 
     df = df[~df["_trade_date"].isin(limit_days)]
 
@@ -112,26 +109,14 @@ def calculate_unit_vpu(df: pd.DataFrame, config: Any) -> pd.DataFrame:
     df["direction"] = "neutral"
 
     if valid_mask.any():
-        df.loc[valid_mask, "adj_spread"] = (
-            df.loc[valid_mask, "adj_high"] - df.loc[valid_mask, "adj_low"]
-        )
-        df.loc[valid_mask, "raw_spread"] = (
-            df.loc[valid_mask, "high"] - df.loc[valid_mask, "low"]
-        )
+        df.loc[valid_mask, "adj_spread"] = df.loc[valid_mask, "adj_high"] - df.loc[valid_mask, "adj_low"]
+        df.loc[valid_mask, "raw_spread"] = df.loc[valid_mask, "high"] - df.loc[valid_mask, "low"]
 
-        df.loc[valid_mask, "adj_units"] = np.ceil(
-            df.loc[valid_mask, "adj_spread"] / config.PRICE_UNIT
-        ).clip(lower=1)
-        df.loc[valid_mask, "raw_units"] = np.ceil(
-            df.loc[valid_mask, "raw_spread"] / config.PRICE_UNIT
-        ).clip(lower=1)
+        df.loc[valid_mask, "adj_units"] = np.ceil(df.loc[valid_mask, "adj_spread"] / config.PRICE_UNIT).clip(lower=1)
+        df.loc[valid_mask, "raw_units"] = np.ceil(df.loc[valid_mask, "raw_spread"] / config.PRICE_UNIT).clip(lower=1)
 
-        df.loc[valid_mask, "vpu_i"] = (
-            df.loc[valid_mask, "volume"] / df.loc[valid_mask, "adj_units"]
-        )
-        df.loc[valid_mask, "apu_i"] = (
-            df.loc[valid_mask, "amount"] / df.loc[valid_mask, "raw_units"]
-        )
+        df.loc[valid_mask, "vpu_i"] = df.loc[valid_mask, "volume"] / df.loc[valid_mask, "adj_units"]
+        df.loc[valid_mask, "apu_i"] = df.loc[valid_mask, "amount"] / df.loc[valid_mask, "raw_units"]
 
         up_mask = valid_mask & (df["close"] > df["open"])
         down_mask = valid_mask & (df["close"] < df["open"])
@@ -142,9 +127,7 @@ def calculate_unit_vpu(df: pd.DataFrame, config: Any) -> pd.DataFrame:
     return df
 
 
-def aggregate_daily(
-    df: pd.DataFrame, config: Any, code: str = "000001", is_st: bool = False
-) -> pd.DataFrame:
+def aggregate_daily(df: pd.DataFrame, config: Any, code: str = "000001", is_st: bool = False) -> pd.DataFrame:
     if "_trade_date" not in df.columns:
         df = df.copy()
         df["_trade_date"] = pd.to_datetime(df["date"]).dt.date
@@ -197,12 +180,8 @@ def aggregate_daily(
             }
         )
 
-    daily_results = valid_df.groupby("_trade_date", group_keys=False).apply(
-        get_daily_metrics
-    )
-    daily_results = daily_results.reset_index().rename(
-        columns={"index": "date", "_trade_date": "date"}
-    )
+    daily_results = valid_df.groupby("_trade_date", group_keys=False).apply(get_daily_metrics)
+    daily_results = daily_results.reset_index().rename(columns={"index": "date", "_trade_date": "date"})
 
     return daily_results
 

@@ -5,19 +5,16 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 
+from calculator import calculate_vpu
 from config import Config, validate_stock_code
 from data_fetcher import fetch_5min_kline
-from calculator import calculate_vpu
-from visualizer import export_png, export_csv
-from batch_processor import BatchProcessor
 from export_manager import ExportManager
+from visualizer import export_png
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="VPU Stock Liquidity Indicator CLI")
-    parser.add_argument(
-        "code", help="Stock code or codes (comma separated, e.g., 600519,000858)"
-    )
+    parser.add_argument("code", help="Stock code or codes (comma separated, e.g., 600519,000858)")
     parser.add_argument(
         "-s",
         "--start",
@@ -67,9 +64,7 @@ def format_summary_table(result_df: pd.DataFrame) -> str:
     display_df["date"] = display_df["date"].astype(str)
 
     for col in ["vpu", "vpu_up", "vpu_down", "close_price"]:
-        display_df[col] = display_df[col].apply(
-            lambda x: f"{x:.2f}" if pd.notna(x) else "-"
-        )
+        display_df[col] = display_df[col].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "-")
 
     return display_df.to_string(index=False)
 
@@ -122,18 +117,14 @@ def main():
             end_date_clean = end_date.replace("-", "")
 
             if args.output in ["png", "all"]:
-                png_path = os.path.join(
-                    args.output_dir, f"{code}_vpu_{end_date_clean}.png"
-                )
+                png_path = os.path.join(args.output_dir, f"{code}_vpu_{end_date_clean}.png")
                 export_png(result_df, png_path, code)
                 print(f"PNG exported to: {png_path}")
 
             formats = ["csv", "xlsx", "json", "parquet"]
             for fmt in formats:
                 if args.output == fmt or args.output == "all":
-                    out_path = os.path.join(
-                        args.output_dir, f"{code}_vpu_{end_date_clean}.{fmt}"
-                    )
+                    out_path = os.path.join(args.output_dir, f"{code}_vpu_{end_date_clean}.{fmt}")
                     ExportManager.export(result_df, fmt, out_path)
                     print(f"{fmt.upper()} exported to: {out_path}")
 

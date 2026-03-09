@@ -1,6 +1,6 @@
-import pandas as pd
 import os
-from typing import Optional
+
+import pandas as pd
 
 
 class ExportManager:

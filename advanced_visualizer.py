@@ -1,14 +1,9 @@
 import pandas as pd
-import numpy as np
-from typing import Dict, List, Optional
-from visualizer import wrap_js_code
 
 
 class AdvancedVisualizer:
     @staticmethod
-    def render_comparison_chart(
-        comparison_df: pd.DataFrame, title: str = "Stock Comparison"
-    ):
+    def render_comparison_chart(comparison_df: pd.DataFrame, title: str = "Stock Comparison"):
         if comparison_df.empty:
             return {}
 
@@ -48,9 +43,7 @@ class AdvancedVisualizer:
             "yAxis": {
                 "type": "value",
                 "axisLabel": {"color": "#aaa"},
-                "splitLine": {
-                    "lineStyle": {"color": "rgba(255,255,255,0.06)", "type": "dashed"}
-                },
+                "splitLine": {"lineStyle": {"color": "rgba(255,255,255,0.06)", "type": "dashed"}},
             },
             "series": series,
             "dataZoom": [{"type": "slider", "bottom": "0%"}],

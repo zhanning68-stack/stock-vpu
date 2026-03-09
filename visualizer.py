@@ -1,8 +1,7 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import matplotlib.patches as patches
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from streamlit_echarts import JsCode
 
 
@@ -47,9 +46,7 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
         "}"
     )
 
-    yaxis_label_formatter = (
-        "function(value) { return Math.abs(value).toLocaleString(); }"
-    )
+    yaxis_label_formatter = "function(value) { return Math.abs(value).toLocaleString(); }"
 
     return {
         "backgroundColor": "transparent",
@@ -109,9 +106,7 @@ def render_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "scale": True,
                 "name": "价格 (元)",
                 "axisLabel": {"color": "#aaa"},
-                "splitLine": {
-                    "lineStyle": {"color": "rgba(255,255,255,0.06)", "type": "dashed"}
-                },
+                "splitLine": {"lineStyle": {"color": "rgba(255,255,255,0.06)", "type": "dashed"}},
             },
             {
                 "scale": True,
@@ -230,9 +225,7 @@ def render_apu_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
     apu = result_df["apu"].tolist()
     close_price = result_df["close_price"].tolist()
 
-    title_text = (
-        f"APU 成交额深度指标 — {stock_code}" if stock_code else "APU 成交额深度指标"
-    )
+    title_text = f"APU 成交额深度指标 — {stock_code}" if stock_code else "APU 成交额深度指标"
 
     tooltip_formatter = (
         "function(params) {"
@@ -289,9 +282,7 @@ def render_apu_chart(result_df: pd.DataFrame, stock_code: str = "") -> dict:
                 "name": "APU (元/0.05元)",
                 "position": "left",
                 "axisLabel": {"color": "#aaa"},
-                "splitLine": {
-                    "lineStyle": {"type": "dashed", "color": "rgba(255,255,255,0.06)"}
-                },
+                "splitLine": {"lineStyle": {"type": "dashed", "color": "rgba(255,255,255,0.06)"}},
             },
             {
                 "type": "value",
@@ -347,9 +338,7 @@ def export_png(result_df: pd.DataFrame, output_path: str, stock_code: str = "") 
 
     x = np.arange(len(dates))
 
-    fig, (ax1, ax3) = plt.subplots(
-        2, 1, figsize=(14, 10), gridspec_kw={"height_ratios": [2, 1]}, sharex=True
-    )
+    fig, (ax1, ax3) = plt.subplots(2, 1, figsize=(14, 10), gridspec_kw={"height_ratios": [2, 1]}, sharex=True)
 
     # Plot Candlestick on ax1
     # Use rectangles for candle bodies

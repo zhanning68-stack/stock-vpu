@@ -1,6 +1,7 @@
+import contextlib
 import re
 from datetime import datetime
-from typing import List, Dict, Union, Optional
+
 import pandas as pd
 
 
@@ -36,9 +37,7 @@ class DataValidator:
             return False
 
     @staticmethod
-    def validate_dataframe(
-        df: pd.DataFrame, required_cols: Optional[List[str]] = None
-    ) -> Dict:
+    def validate_dataframe(df: pd.DataFrame, required_cols: list[str] | None = None) -> dict:
         if df is None or df.empty:
             return {
                 "is_valid": False,
@@ -58,10 +57,8 @@ class DataValidator:
 
         date_range = (None, None)
         if "date" in df.columns:
-            try:
+            with contextlib.suppress(TypeError, ValueError):
                 date_range = (df["date"].min(), df["date"].max())
-            except:
-                pass
 
         return {
             "is_valid": has_required_columns and not has_nulls,

@@ -1,5 +1,5 @@
-from typing import Dict, Any, List, Optional
 import abc
+from typing import Any
 
 
 class BasePlugin(abc.ABC):
@@ -14,15 +14,15 @@ class BasePlugin(abc.ABC):
 
 class PluginManager:
     def __init__(self):
-        self._plugins: Dict[str, BasePlugin] = {}
+        self._plugins: dict[str, BasePlugin] = {}
 
     def register(self, plugin: BasePlugin):
         self._plugins[plugin.name] = plugin
 
-    def get_plugin(self, name: str) -> Optional[BasePlugin]:
+    def get_plugin(self, name: str) -> BasePlugin | None:
         return self._plugins.get(name)
 
-    def list_plugins(self) -> List[str]:
+    def list_plugins(self) -> list[str]:
         return list(self._plugins.keys())
 
     def run_plugin(self, name: str, data: Any, config: Any) -> Any:
