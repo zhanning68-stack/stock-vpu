@@ -1,7 +1,6 @@
-import math
-
 import numpy as np
 import pandas as pd
+from typing import List, Dict, Union, Any
 
 
 def _get_limit_threshold(code: str, is_st: bool = False) -> float:
@@ -13,13 +12,21 @@ def _get_limit_threshold(code: str, is_st: bool = False) -> float:
 
 
 def _trimmed_mean(values: pd.Series, trim_ratio: float) -> float:
-    sorted_values = values.sort_values().reset_index(drop=True)
-    n = len(sorted_values)
-    trim_count = math.floor(n * trim_ratio)
+    if values.empty:
+        return np.nan
+
+    n = len(values)
+    if n == 0:
+        return np.nan
+
+    sorted_values = np.sort(values.values)
+    trim_count = int(np.floor(n * trim_ratio))
+
     if 2 * trim_count >= n:
-        return sorted_values.mean()
-    trimmed = sorted_values.iloc[trim_count : n - trim_count]
-    return trimmed.mean()
+        return float(np.mean(sorted_values))
+
+    trimmed = sorted_values[trim_count : n - trim_count]
+    return float(np.mean(trimmed))
 
 
 def _extract_time_str(dt_value) -> str:
@@ -38,25 +45,29 @@ def _extract_date(dt_value):
 
 def clean_data(
     df: pd.DataFrame,
-    config,
+    config: Any,
     code: str = "000001",
     is_st: bool = False,
 ) -> pd.DataFrame:
     df = df.copy()
 
     if "time" in df.columns:
-        df["_time_str"] = df["time"].apply(_extract_time_str)
+        df["_time_str"] = pd.to_datetime(df["time"]).dt.strftime("%H:%M")
     else:
-        df["_time_str"] = df["date"].apply(lambda x: _extract_time_str(x))
+        df["_time_str"] = pd.to_datetime(df["date"]).dt.strftime("%H:%M")
 
-    df["_trade_date"] = df["date"].apply(_extract_date)
+    df["_trade_date"] = pd.to_datetime(df["date"]).dt.date
 
     threshold = _get_limit_threshold(code, is_st)
 
-    daily_stats = df.groupby("_trade_date").agg(
-        daily_high=("high", "max"),
-        daily_low=("low", "min"),
-        prev_close=("prev_close", "first"),
+    daily_stats = (
+        df.groupby("_trade_date")
+        .agg(
+            daily_high=("high", "max"),
+            daily_low=("low", "min"),
+            prev_close=("prev_close", "first"),
+        )
+        .reset_index()
     )
 
     daily_stats["up_pct"] = (
@@ -68,7 +79,7 @@ def clean_data(
 
     limit_days = daily_stats[
         (daily_stats["up_pct"] > threshold) | (daily_stats["down_pct"] < -threshold)
-    ].index
+    ]["_trade_date"].tolist()
 
     df = df[~df["_trade_date"].isin(limit_days)]
 
@@ -87,10 +98,10 @@ def clean_data(
     return df
 
 
-def calculate_unit_vpu(df: pd.DataFrame, config) -> pd.DataFrame:
+def calculate_unit_vpu(df: pd.DataFrame, config: Any) -> pd.DataFrame:
     df = df.copy()
 
-    valid_mask = ~df.get("insufficient_data", pd.Series(False, index=df.index))
+    valid_mask = ~df["insufficient_data"].fillna(False)
 
     df["adj_spread"] = np.nan
     df["raw_spread"] = np.nan
@@ -100,139 +111,121 @@ def calculate_unit_vpu(df: pd.DataFrame, config) -> pd.DataFrame:
     df["apu_i"] = np.nan
     df["direction"] = "neutral"
 
-    df.loc[valid_mask, "adj_spread"] = (
-        df.loc[valid_mask, "adj_high"] - df.loc[valid_mask, "adj_low"]
-    )
-    df.loc[valid_mask, "raw_spread"] = (
-        df.loc[valid_mask, "high"] - df.loc[valid_mask, "low"]
-    )
+    if valid_mask.any():
+        df.loc[valid_mask, "adj_spread"] = (
+            df.loc[valid_mask, "adj_high"] - df.loc[valid_mask, "adj_low"]
+        )
+        df.loc[valid_mask, "raw_spread"] = (
+            df.loc[valid_mask, "high"] - df.loc[valid_mask, "low"]
+        )
 
-    adj_spread_valid = df.loc[valid_mask, "adj_spread"]
-    raw_spread_valid = df.loc[valid_mask, "raw_spread"]
+        df.loc[valid_mask, "adj_units"] = np.ceil(
+            df.loc[valid_mask, "adj_spread"] / config.PRICE_UNIT
+        ).clip(lower=1)
+        df.loc[valid_mask, "raw_units"] = np.ceil(
+            df.loc[valid_mask, "raw_spread"] / config.PRICE_UNIT
+        ).clip(lower=1)
 
-    df.loc[valid_mask, "adj_units"] = np.ceil(
-        adj_spread_valid / config.PRICE_UNIT
-    ).clip(lower=1)
-    df.loc[valid_mask, "raw_units"] = np.ceil(
-        raw_spread_valid / config.PRICE_UNIT
-    ).clip(lower=1)
+        df.loc[valid_mask, "vpu_i"] = (
+            df.loc[valid_mask, "volume"] / df.loc[valid_mask, "adj_units"]
+        )
+        df.loc[valid_mask, "apu_i"] = (
+            df.loc[valid_mask, "amount"] / df.loc[valid_mask, "raw_units"]
+        )
 
-    df.loc[valid_mask, "vpu_i"] = (
-        df.loc[valid_mask, "volume"] / df.loc[valid_mask, "adj_units"]
-    )
-    df.loc[valid_mask, "apu_i"] = (
-        df.loc[valid_mask, "amount"] / df.loc[valid_mask, "raw_units"]
-    )
+        up_mask = valid_mask & (df["close"] > df["open"])
+        down_mask = valid_mask & (df["close"] < df["open"])
 
-    up_mask = valid_mask & (df["close"] > df["open"])
-    down_mask = valid_mask & (df["close"] < df["open"])
-
-    df.loc[up_mask, "direction"] = "up"
-    df.loc[down_mask, "direction"] = "down"
+        df.loc[up_mask, "direction"] = "up"
+        df.loc[down_mask, "direction"] = "down"
 
     return df
 
 
 def aggregate_daily(
-    df: pd.DataFrame, config, code: str = "000001", is_st: bool = False
+    df: pd.DataFrame, config: Any, code: str = "000001", is_st: bool = False
 ) -> pd.DataFrame:
     if "_trade_date" not in df.columns:
         df = df.copy()
-        df["_trade_date"] = df["date"].apply(_extract_date)
+        df["_trade_date"] = pd.to_datetime(df["date"]).dt.date
 
-    valid_df = df[~df.get("insufficient_data", pd.Series(False, index=df.index))]
+    valid_df = df[~df["insufficient_data"].fillna(False)].copy()
 
-    results = []
+    if valid_df.empty:
+        return pd.DataFrame()
 
-    for trade_date, day_group in valid_df.groupby("_trade_date"):
-        day_vpu = day_group["vpu_i"].dropna()
-        day_apu = day_group["apu_i"].dropna()
-
-        if day_vpu.empty:
-            continue
-
-        vpu = _trimmed_mean(day_vpu, config.TRIM_RATIO)
-        apu = _trimmed_mean(day_apu, config.TRIM_RATIO)
+    def get_daily_metrics(group: pd.DataFrame) -> pd.Series:
+        vpu = _trimmed_mean(group["vpu_i"].dropna(), config.TRIM_RATIO)
+        apu = _trimmed_mean(group["apu_i"].dropna(), config.TRIM_RATIO)
 
         vpu_up = np.nan
         vpu_down = np.nan
 
         if config.ENABLE_DIRECTION:
-            up_bars = day_group[day_group["direction"] == "up"]["vpu_i"].dropna()
-            down_bars = day_group[day_group["direction"] == "down"]["vpu_i"].dropna()
+            up_bars = group[group["direction"] == "up"]["vpu_i"].dropna()
+            down_bars = group[group["direction"] == "down"]["vpu_i"].dropna()
 
             if len(up_bars) >= 3:
                 vpu_up = _trimmed_mean(up_bars, config.TRIM_RATIO)
-
             if len(down_bars) >= 3:
                 vpu_down = _trimmed_mean(down_bars, config.TRIM_RATIO)
 
-        close_price = day_group.iloc[-1]["close"]
-        open_price = day_group.iloc[0]["open"]
-        daily_high = day_group["high"].max()
-        daily_low = day_group["low"].min()
+        last_row = group.iloc[-1]
+        first_row = group.iloc[0]
+        prev_close = first_row["prev_close"]
+        daily_high = group["high"].max()
+        daily_low = group["low"].min()
 
-        prev_close = day_group.iloc[0]["prev_close"]
         threshold = _get_limit_threshold(code, is_st)
         is_limit_up = (daily_high - prev_close) / prev_close > threshold
         is_limit_down = (daily_low - prev_close) / prev_close < -threshold
 
-        results.append(
+        return pd.Series(
             {
-                "date": trade_date,
                 "vpu": vpu,
                 "vpu_up": vpu_up,
                 "vpu_down": vpu_down,
                 "apu": apu,
-                "open": open_price,
+                "open": first_row["open"],
                 "high": daily_high,
                 "low": daily_low,
-                "close": close_price,
-                "close_price": close_price,  # Keep for backward compatibility
+                "close": last_row["close"],
+                "close_price": last_row["close"],
                 "is_limit_up": is_limit_up,
                 "is_limit_down": is_limit_down,
                 "is_ex_dividend": False,
             }
         )
 
-    if not results:
-        return pd.DataFrame(
-            columns=[
-                "date",
-                "vpu",
-                "vpu_up",
-                "vpu_down",
-                "apu",
-                "close_price",
-                "is_limit_up",
-                "is_limit_down",
-                "is_ex_dividend",
-            ]
-        )
+    daily_results = valid_df.groupby("_trade_date", group_keys=False).apply(
+        get_daily_metrics
+    )
+    daily_results = daily_results.reset_index().rename(
+        columns={"index": "date", "_trade_date": "date"}
+    )
 
-    return pd.DataFrame(results)
+    return daily_results
 
 
-def calculate_moving_averages(df: pd.DataFrame, config) -> pd.DataFrame:
+def calculate_moving_averages(df: pd.DataFrame, config: Any) -> pd.DataFrame:
+    if df.empty:
+        return df
     df = df.copy()
-
     for period in config.MA_PERIODS:
         column_name = f"ma{period}"
         df[column_name] = df["vpu"].rolling(window=period, min_periods=1).mean()
-
     return df
 
 
 def calculate_vpu(
     df: pd.DataFrame,
-    config,
+    config: Any,
     code: str = "000001",
     is_st: bool = False,
 ) -> pd.DataFrame:
     cleaned = clean_data(df, config, code=code, is_st=is_st)
     with_unit_vpu = calculate_unit_vpu(cleaned, config)
     daily = aggregate_daily(with_unit_vpu, config, code=code, is_st=is_st)
-    with_ma = calculate_moving_averages(daily, config)
 
     output_columns = [
         "date",
@@ -251,6 +244,11 @@ def calculate_vpu(
         "is_limit_down",
         "is_ex_dividend",
     ]
+
+    if daily.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    with_ma = calculate_moving_averages(daily, config)
 
     for col in output_columns:
         if col not in with_ma.columns:
