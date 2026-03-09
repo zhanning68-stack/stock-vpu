@@ -16,7 +16,7 @@ metadata:
     data_processing: pandas + numpy
     visualization: Streamlit + Apache ECharts
     api_framework: FastAPI
-    caching: File-based pickle cache with TTL
+    caching: File-based pickle cache with TTL (default 24h)
     ci_cd: GitHub Actions
 
 # =============================================================================
@@ -113,7 +113,8 @@ configuration:
 validation:
   stock_code:
     description: A股股票代码格式验证
-    pattern: "^(sh|sz)?(600|601|603|000|001|002|003|300|301|688)[0-9]{3}$"
+    # 注意：实际代码中 6 开头的股票用 6\d{5} 宽匹配，覆盖 600/601/603 等全系列
+    pattern: "^(sh|sz)?(6\\d{5}|000\\d{3}|001\\d{3}|002\\d{3}|003\\d{3}|300\\d{3}|301\\d{3}|688\\d{3})$"
     markets:
       main_board:
         prefixes: ["600", "601", "603", "000", "001", "002", "003"]
@@ -132,7 +133,6 @@ validation:
     constraints:
       - start_date <= end_date
       - date_format: "YYYY-MM-DD"
-      - max_range_days: 365
 
   dataframe:
     description: 数据框完整性验证
@@ -201,10 +201,27 @@ calculation_flow:
       - stock_code: string, validated
       - start_date: string, YYYY-MM-DD
       - end_date: string, YYYY-MM-DD
-    output: raw_5min_kline_dataframe
-    data_source: AKShare stock_zh_a_minute
+    output: raw_5min_kline_dataframe (含前复权列和prev_close列)
+    symbol_conversion:
+      description: 将纯数字代码转为新浪格式
+      rule: "6开头 → sh{code}, 其余 → sz{code}, 已有sh/sz前缀则保留"
+    data_requests:
+      - name: unadjusted_5min
+        api: AKShare stock_zh_a_minute(adjust="")
+        columns: [date, open, high, low, close, volume, amount]
+      - name: adjusted_5min
+        api: AKShare stock_zh_a_minute(adjust="qfq")
+        columns: [date, adj_open, adj_high, adj_low, adj_close]
+      - name: daily_kline
+        api: AKShare stock_zh_a_daily(adjust="")
+        purpose: 获取前收盘价(prev_close)
+        logic: 从日线数据的close.shift(1)映射到分钟线的交易日
+    merge_logic: |
+      1. unadjusted与adjusted按date列left join
+      2. daily_kline计算prev_close后按交易日映射到分钟线
+      3. prev_close缺失时用当前close填充
     cache: true
-    ttl_seconds: 3600
+    ttl_hours: 24
 
   step_2_clean:
     name: 数据清洗
@@ -244,6 +261,48 @@ calculation_flow:
       - ma10: rolling_mean(vpu, window=10, min_periods=1)
 
 # =============================================================================
+# 错误处理规范
+# =============================================================================
+error_handling:
+  data_fetcher:
+    invalid_stock_code: return empty DataFrame, log error
+    invalid_date_range: return empty DataFrame, log error
+    network_failure: retry up to 3 times with incremental backoff, then raise
+    api_returns_none: return empty DataFrame, log warning
+    api_returns_empty: return empty DataFrame, log warning
+
+  calculator:
+    empty_input: return empty DataFrame
+    all_days_insufficient: return empty DataFrame
+    no_valid_units_after_cleaning: mark day as insufficient, skip
+
+  api_server:
+    empty_data: HTTP 404 with detail message
+    calculation_error: HTTP 500 with error detail
+    validation_error: HTTP 422 (Pydantic auto)
+
+  general_principles:
+    - 数据采集失败不应导致程序崩溃，返回空 DataFrame 降级处理
+    - 所有异常必须经过 logger 记录
+    - API 层异常转化为对应 HTTP 状态码
+
+# =============================================================================
+# 模块依赖关系
+# =============================================================================
+module_dependencies:
+  call_graph:
+    main.py: [config, data_fetcher, calculator, visualizer, batch_processor, export_manager]
+    app.py: [config, data_fetcher, calculator, visualizer, advanced_visualizer, technical_analyzer, data_validator]
+    api_server.py: [config, data_fetcher, calculator, logger]
+    calculator.py: [numpy, pandas]
+    data_fetcher.py: [akshare, cache_manager, data_validator, logger]
+    data_validator.py: [pandas]
+    cache_manager.py: []
+    export_manager.py: [pandas]
+    visualizer.py: [matplotlib, streamlit_echarts]
+    batch_processor.py: [data_fetcher, calculator, config]
+
+# =============================================================================
 # 功能模块规范
 # =============================================================================
 modules:
@@ -278,15 +337,20 @@ modules:
 
   data_fetcher:
     file: data_fetcher.py
-    responsibility: 封装AKShare，处理重试与网络异常
+    responsibility: 封装AKShare，处理重试与网络异常，合并未复权与前复权数据
+    internal_functions:
+      - name: _to_sina_symbol
+        description: 将纯数字代码转为新浪sh/sz前缀格式
+      - name: _fetch_with_retry
+        description: 通用重试包装器，支持递增退避
     functions:
       - name: fetch_5min_kline
         input: [code, start_date, end_date]
         output: dataframe
         retry_policy:
           max_retries: 3
-          backoff: 5 seconds
-          interval: 2 seconds
+          backoff: "5 * attempt seconds (incremental)"
+          request_interval: 2 seconds
         caching: true
         test_coverage: required
 
@@ -305,8 +369,21 @@ modules:
         test_coverage: required
 
       - name: validate_dataframe
-        input: [df]
-        output: boolean
+        input: [df, required_cols (optional)]
+        output:
+          type: Dict
+          fields:
+            is_valid: boolean
+            has_required_columns: boolean
+            missing_columns: list[str]
+            has_nulls: boolean
+            date_range: tuple
+            row_count: int
+        test_coverage: required
+
+      - name: get_market_type
+        input: [code]
+        output: string (STAR | MAIN_SH | CHINEXT | MAIN_SZ | UNKNOWN)
         test_coverage: required
 
   cache_manager:
@@ -427,21 +504,32 @@ interfaces:
       - 参数实时调节（滑动条）
       - 交互式K线联动图
       - 数据导出
-    cache_ttl: 3600 seconds
+    cache_ttl: 3600 seconds (@st.cache_data)
 
   api:
     file: api_server.py
     framework: FastAPI
     description: RESTful API服务
     endpoints:
+      - path: /
+        method: GET
+        output: JSON status message
       - path: /api/v1/calculate
         method: POST
         input:
-          code: string
-          start_date: string (optional)
-          end_date: string (optional)
-        output: JSON with vpu data
+          code: string (required)
+          start_date: string (required)
+          end_date: string (required)
+          price_unit: float (default 0.05)
+          trim_ratio: float (default 0.25)
+        output: JSON array of daily VPU records
+        error_responses:
+          404: no data found for stock code
+          500: internal calculation error
         test_coverage: required
+      - path: /api/v1/health
+        method: GET
+        output: JSON with status and timestamp
 
 # =============================================================================
 # 可视化规范
@@ -491,15 +579,30 @@ testing:
   coverage_target: 80%
   test_categories:
     unit_tests:
-      - calculator functions
-      - data_validator functions
-      - cache_manager functions
-      - export_manager functions
+      calculator:
+        - _get_limit_threshold: 主板/创业板/科创板/ST各阈值
+        - _trimmed_mean: 基础/零截尾/高截尾回退/单元素/全相同值
+        - clean_data: 涨停日剔除/跌停日剔除/首尾单元剔除/零价差/极低振幅/数据不足标记/688阈值
+        - calculate_unit_vpu: 离散ceil公式/VPU公式/APU用raw_units/方向判定(up/down/neutral)/insufficient跳过/最小单位为1
+        - aggregate_daily: 日级聚合/截尾均值/方向性split/方向不足3条时NaN/方向禁用/涨跌停flag/空输入/收盘价取最后一条
+        - calculate_moving_averages: MA5/MA10列存在/数值正确/min_periods=1
+        - calculate_vpu: 端到端输出列/列顺序/VPU正值
+      data_validator:
+        - validate_stock_code: 主板/创业板/科创板/sh前缀/sz前缀/无效前缀/过短/过长/含字母/空串/空格
+        - validate_date_range: 正常/逆序/格式错误
+        - validate_dataframe: 空DataFrame/缺列/含null
+        - get_market_type: 各市场类型识别
+      cache_manager:
+        - get/set: 存取一致性
+        - TTL过期: 过期后返回None
+        - get_cache_key: 参数序列化一致性
+      export_manager:
+        - export: 各格式(csv/xlsx/json/parquet/html)文件生成
 
     integration_tests:
-      - end_to_end_calculation
-      - api_endpoints
-      - data_fetch_with_mock
+      - end_to_end_calculation: fetch→clean→calculate→output完整链路(mock网络)
+      - api_endpoints: POST /api/v1/calculate 正常/404/500
+      - data_fetch_with_mock: 列重命名/prev_close映射/日期过滤/异常返回空
 
     edge_cases:
       - empty_dataframe
@@ -561,26 +664,11 @@ acceptance_criteria:
     - 图表支持交互式缩放和平移
 
 # =============================================================================
-# 待改进项 (基于TODO.md)
+# 未来路线图 (非 spec 约束，仅供参考)
 # =============================================================================
-improvements:
-  completed:
-    - 增强数据验证层
-    - 增强日志系统
-    - 增强缓存机制
-    - 性能优化（向量化计算）
-    - 批量处理功能
-    - 高级可视化
-    - 技术分析指标
-    - 数据导出增强
-    - 插件架构
-    - REST API
-    - Docker化
-    - CI/CD流水线
-
-  potential_future:
-    - 实时数据流支持
-    - 机器学习预测模型
-    - 多因子分析
-    - 告警系统
-    - 用户认证与权限
+roadmap:
+  - 实时数据流支持
+  - 机器学习预测模型
+  - 多因子分析
+  - 告警系统
+  - 用户认证与权限

@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 .env
 .worktrees/
+cache/
+*.log
+.ruff_cache/
