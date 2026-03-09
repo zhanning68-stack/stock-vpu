@@ -21,33 +21,37 @@ data_fetcher.cache.ttl_seconds = 0
 import math
 import os
 import tempfile
-from datetime import datetime, date, timedelta
+import time
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 import pytest
 
-from config import Config, config, validate_stock_code
+from cache_manager import CacheManager
 from calculator import (
+    _extract_date,
+    _extract_time_str,
     _get_limit_threshold,
     _trimmed_mean,
-    _extract_time_str,
-    _extract_date,
-    clean_data,
-    calculate_unit_vpu,
     aggregate_daily,
     calculate_moving_averages,
+    calculate_unit_vpu,
     calculate_vpu,
+    clean_data,
 )
+from config import Config, config, validate_stock_code
+from data_fetcher import fetch_5min_kline
+from data_validator import DataValidator
+from export_manager import ExportManager
 from visualizer import (
-    render_chart,
-    render_apu_chart,
     export_csv,
     export_png,
+    render_apu_chart,
+    render_chart,
     wrap_js_code,
 )
-from data_fetcher import fetch_5min_kline
 
 
 def test_wrap_js_code_in_visualizer():
@@ -126,7 +130,7 @@ def make_mock_kline(n_days=5, bars_per_day=48, base_price=100.0, code="000001"):
 
         times_to_use = TIMES_5MIN[:bars_per_day]
 
-        for i, t in enumerate(times_to_use):
+        for _i, t in enumerate(times_to_use):
             dt_str = f"{day_str} {t}:00"
             dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S")
 
@@ -816,9 +820,7 @@ class TestDataFetcher:
         for i in range(n):
             rows.append(
                 {
-                    "day": (base + timedelta(minutes=5 * i)).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    ),
+                    "day": (base + timedelta(minutes=5 * i)).strftime("%Y-%m-%d %H:%M:%S"),
                     "open": 100.0 + i * 0.1,
                     "close": 100.05 + i * 0.1,
                     "high": 100.10 + i * 0.1,
@@ -835,9 +837,7 @@ class TestDataFetcher:
         for i in range(n):
             rows.append(
                 {
-                    "day": (base + timedelta(minutes=5 * i)).strftime(
-                        "%Y-%m-%d %H:%M:%S"
-                    ),
+                    "day": (base + timedelta(minutes=5 * i)).strftime("%Y-%m-%d %H:%M:%S"),
                     "open": 101.0 + i * 0.1,
                     "close": 101.05 + i * 0.1,
                     "high": 101.10 + i * 0.1,
@@ -1080,3 +1080,302 @@ class TestValidateStockCode:
 
     def test_whitespace_trimmed(self):
         assert validate_stock_code("  600519  ") is True
+
+
+# =============================================================================
+# DataValidator — validate_date_range
+# =============================================================================
+class TestValidateDateRange:
+    def test_valid_range(self):
+        assert DataValidator.validate_date_range("2025-01-01", "2025-01-31") is True
+
+    def test_same_day(self):
+        assert DataValidator.validate_date_range("2025-01-01", "2025-01-01") is True
+
+    def test_reversed_range(self):
+        assert DataValidator.validate_date_range("2025-01-31", "2025-01-01") is False
+
+    def test_invalid_format_start(self):
+        assert DataValidator.validate_date_range("2025/01/01", "2025-01-31") is False
+
+    def test_invalid_format_end(self):
+        assert DataValidator.validate_date_range("2025-01-01", "not-a-date") is False
+
+    def test_invalid_format_both(self):
+        assert DataValidator.validate_date_range("abc", "def") is False
+
+
+# =============================================================================
+# DataValidator — validate_dataframe
+# =============================================================================
+class TestValidateDataframe:
+    def _make_valid_df(self):
+        return pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2025-01-06", "2025-01-07"]),
+                "open": [10.0, 11.0],
+                "high": [10.5, 11.5],
+                "low": [9.5, 10.5],
+                "close": [10.2, 11.2],
+                "volume": [1000, 2000],
+                "amount": [10200.0, 22400.0],
+            }
+        )
+
+    def test_valid_dataframe(self):
+        result = DataValidator.validate_dataframe(self._make_valid_df())
+        assert result["is_valid"] is True
+        assert result["has_required_columns"] is True
+        assert result["missing_columns"] == []
+        assert result["has_nulls"] is False
+        assert result["row_count"] == 2
+
+    def test_empty_dataframe(self):
+        result = DataValidator.validate_dataframe(pd.DataFrame())
+        assert result["is_valid"] is False
+        assert result["row_count"] == 0
+
+    def test_none_dataframe(self):
+        result = DataValidator.validate_dataframe(None)
+        assert result["is_valid"] is False
+        assert result["row_count"] == 0
+
+    def test_missing_columns(self):
+        df = pd.DataFrame({"date": [1], "open": [2]})
+        result = DataValidator.validate_dataframe(df)
+        assert result["is_valid"] is False
+        assert result["has_required_columns"] is False
+        assert len(result["missing_columns"]) > 0
+
+    def test_with_nulls(self):
+        df = self._make_valid_df()
+        df.loc[0, "close"] = None
+        result = DataValidator.validate_dataframe(df)
+        assert result["is_valid"] is False
+        assert result["has_nulls"] is True
+
+    def test_custom_required_cols(self):
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        result = DataValidator.validate_dataframe(df, required_cols=["a", "b"])
+        assert result["is_valid"] is True
+        assert result["missing_columns"] == []
+
+    def test_date_range_extracted(self):
+        df = self._make_valid_df()
+        result = DataValidator.validate_dataframe(df)
+        assert result["date_range"][0] is not None
+        assert result["date_range"][1] is not None
+
+
+# =============================================================================
+# DataValidator — get_market_type
+# =============================================================================
+class TestGetMarketType:
+    def test_main_sh_6(self):
+        assert DataValidator.get_market_type("600519") == "MAIN_SH"
+
+    def test_main_sh_with_prefix(self):
+        assert DataValidator.get_market_type("sh601318") == "MAIN_SH"
+
+    def test_star_688(self):
+        assert DataValidator.get_market_type("688001") == "STAR"
+
+    def test_star_with_prefix(self):
+        assert DataValidator.get_market_type("sh688001") == "STAR"
+
+    def test_main_sz_000(self):
+        assert DataValidator.get_market_type("000001") == "MAIN_SZ"
+
+    def test_main_sz_002(self):
+        assert DataValidator.get_market_type("002230") == "MAIN_SZ"
+
+    def test_chinext_300(self):
+        assert DataValidator.get_market_type("300750") == "CHINEXT"
+
+    def test_chinext_with_prefix(self):
+        assert DataValidator.get_market_type("sz300750") == "CHINEXT"
+
+    def test_unknown(self):
+        assert DataValidator.get_market_type("999999") == "UNKNOWN"
+
+
+# =============================================================================
+# CacheManager
+# =============================================================================
+class TestCacheManager:
+    @pytest.fixture()
+    def cache_dir(self, tmp_path):
+        return str(tmp_path / "test_cache")
+
+    @pytest.fixture()
+    def cm(self, cache_dir):
+        return CacheManager(cache_dir=cache_dir, ttl_hours=1)
+
+    def test_set_and_get(self, cm):
+        cm.set("k1", {"data": [1, 2, 3]})
+        result = cm.get("k1")
+        assert result == {"data": [1, 2, 3]}
+
+    def test_get_missing_key(self, cm):
+        assert cm.get("nonexistent") is None
+
+    def test_ttl_expired(self, cache_dir):
+        cm = CacheManager(cache_dir=cache_dir, ttl_hours=0)
+        cm.ttl_seconds = 0
+        cm.set("k1", "value")
+        time.sleep(0.1)
+        assert cm.get("k1") is None
+
+    def test_get_cache_key_deterministic(self, cm):
+        key1 = cm.get_cache_key(code="600519", start="2025-01-01")
+        key2 = cm.get_cache_key(code="600519", start="2025-01-01")
+        assert key1 == key2
+
+    def test_get_cache_key_different_params(self, cm):
+        key1 = cm.get_cache_key(code="600519", start="2025-01-01")
+        key2 = cm.get_cache_key(code="000001", start="2025-01-01")
+        assert key1 != key2
+
+    def test_get_cache_key_order_independent(self, cm):
+        key1 = cm.get_cache_key(a="1", b="2")
+        key2 = cm.get_cache_key(b="2", a="1")
+        assert key1 == key2
+
+    def test_set_dataframe(self, cm):
+        df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
+        cm.set("df_key", df)
+        result = cm.get("df_key")
+        pd.testing.assert_frame_equal(result, df)
+
+    def test_clear_expired(self, cache_dir):
+        cm = CacheManager(cache_dir=cache_dir, ttl_hours=0)
+        cm.ttl_seconds = 0
+        cm.set("expired1", "data1")
+        cm.set("expired2", "data2")
+        time.sleep(0.1)
+        cm.clear_expired()
+        assert len(os.listdir(cache_dir)) == 0
+
+
+# =============================================================================
+# ExportManager
+# =============================================================================
+class TestExportManager:
+    @pytest.fixture()
+    def sample_df(self):
+        return pd.DataFrame({"date": ["2025-01-06"], "value": [42.5]})
+
+    def test_export_csv(self, sample_df, tmp_path):
+        path = str(tmp_path / "out" / "test.csv")
+        ExportManager.export(sample_df, "csv", path)
+        assert os.path.exists(path)
+        loaded = pd.read_csv(path)
+        assert len(loaded) == 1
+        assert loaded["value"].iloc[0] == 42.5
+
+    def test_export_xlsx(self, sample_df, tmp_path):
+        path = str(tmp_path / "out" / "test.xlsx")
+        ExportManager.export(sample_df, "excel", path)
+        assert os.path.exists(path)
+
+    def test_export_json(self, sample_df, tmp_path):
+        path = str(tmp_path / "out" / "test.json")
+        ExportManager.export(sample_df, "json", path)
+        assert os.path.exists(path)
+        loaded = pd.read_json(path)
+        assert len(loaded) == 1
+
+    def test_export_parquet(self, sample_df, tmp_path):
+        path = str(tmp_path / "out" / "test.parquet")
+        ExportManager.export(sample_df, "parquet", path)
+        assert os.path.exists(path)
+        loaded = pd.read_parquet(path)
+        pd.testing.assert_frame_equal(loaded, sample_df)
+
+    def test_export_html(self, sample_df, tmp_path):
+        path = str(tmp_path / "out" / "test.html")
+        ExportManager.export(sample_df, "html", path)
+        assert os.path.exists(path)
+        with open(path) as f:
+            content = f.read()
+        assert "42.5" in content
+
+    def test_export_empty_df_no_file(self, tmp_path):
+        path = str(tmp_path / "out" / "empty.csv")
+        ExportManager.export(pd.DataFrame(), "csv", path)
+        assert not os.path.exists(path)
+
+    def test_export_unsupported_format(self, sample_df, tmp_path):
+        path = str(tmp_path / "out" / "test.xyz")
+        with pytest.raises(ValueError, match="Unsupported"):
+            ExportManager.export(sample_df, "xyz", path)
+
+    def test_export_format_case_insensitive(self, sample_df, tmp_path):
+        path = str(tmp_path / "out" / "test.csv")
+        ExportManager.export(sample_df, "CSV", path)
+        assert os.path.exists(path)
+
+
+# =============================================================================
+# API Server
+# =============================================================================
+class TestAPIServer:
+    @pytest.fixture()
+    def client(self):
+        from fastapi.testclient import TestClient
+
+        from api_server import app
+
+        return TestClient(app)
+
+    def test_root(self, client):
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "running" in response.json()["message"].lower()
+
+    def test_health(self, client):
+        response = client.get("/api/v1/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+        assert "timestamp" in data
+
+    @patch("api_server.fetch_5min_kline")
+    @patch("api_server.calculate_vpu")
+    def test_calculate_success(self, mock_calc, mock_fetch, client):
+        mock_fetch.return_value = pd.DataFrame(
+            {
+                "date": pd.to_datetime(["2025-01-06"]),
+                "open": [10.0],
+                "high": [10.5],
+                "low": [9.5],
+                "close": [10.2],
+                "volume": [1000],
+                "amount": [10200.0],
+            }
+        )
+        mock_calc.return_value = pd.DataFrame({"date": pd.to_datetime(["2025-01-06"]), "vpu": [500.0]})
+        response = client.post(
+            "/api/v1/calculate",
+            json={"code": "600519", "start_date": "2025-01-06", "end_date": "2025-01-06"},
+        )
+        assert response.status_code == 200
+        assert isinstance(response.json(), list)
+
+    @patch("api_server.fetch_5min_kline")
+    def test_calculate_no_data_404(self, mock_fetch, client):
+        mock_fetch.return_value = pd.DataFrame()
+        response = client.post(
+            "/api/v1/calculate",
+            json={"code": "600519", "start_date": "2025-01-06", "end_date": "2025-01-06"},
+        )
+        assert response.status_code == 404
+
+    @patch("api_server.fetch_5min_kline")
+    def test_calculate_error_500(self, mock_fetch, client):
+        mock_fetch.side_effect = RuntimeError("network down")
+        response = client.post(
+            "/api/v1/calculate",
+            json={"code": "600519", "start_date": "2025-01-06", "end_date": "2025-01-06"},
+        )
+        assert response.status_code == 500
