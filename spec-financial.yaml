@@ -1,0 +1,553 @@
+# Stock VPU - Financial Analysis Module Specification
+# SSD+TDD: This spec drives test cases, then implementation
+# Version: 1.0.0
+# Date: 2026-03-09
+
+metadata:
+  name: Financial Analysis Module
+  description: 断路器模式财务造假检测 + 健康度画像
+  version: 1.0.0
+  parent_spec: spec.yaml
+  design_doc: docs/plans/2026-03-09-financial-analysis-design.md
+
+# =============================================================================
+# 数据规范
+# =============================================================================
+data:
+  source:
+    provider: AKShare
+    statements:
+      - balance_sheet        # 资产负债表
+      - income_statement     # 利润表
+      - cash_flow_statement  # 现金流量表
+
+  storage:
+    engine: SQLite
+    file: data/financial.db
+    table: financial_data
+    schema:
+      stock_code:
+        type: TEXT
+        nullable: false
+        description: 股票代码 (e.g. '600519')
+        validation: "^(00[0-2]|300|301|600|601|603|605|688)\\d{3}$"
+      report_date:
+        type: TEXT
+        nullable: false
+        description: 报告期 (YYYY-MM-DD, quarter-end dates only)
+        validation: "^\\d{4}-(03-31|06-30|09-30|12-31)$"
+      data_payload:
+        type: TEXT (JSON)
+        nullable: false
+        description: 20 key financial fields as JSON string
+      updated_at:
+        type: TEXT
+        nullable: false
+        description: ISO 8601 timestamp of last update
+    primary_key: [stock_code, report_date]
+    index: [stock_code]
+
+  key_fields:
+    - name: monetary_funds
+      chinese: 货币资金
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: interest_income
+      chinese: 利息收入
+      source: income_statement
+      type: float
+      unit: CNY
+    - name: interest_expense
+      chinese: 利息支出
+      source: income_statement
+      type: float
+      unit: CNY
+    - name: accounts_receivable
+      chinese: 应收账款
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: revenue
+      chinese: 营业收入
+      source: income_statement
+      type: float
+      unit: CNY
+    - name: total_assets
+      chinese: 总资产
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: short_term_borrowing
+      chinese: 短期借款
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: long_term_borrowing
+      chinese: 长期借款
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: bonds_payable
+      chinese: 应付债券
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: net_profit
+      chinese: 净利润
+      source: income_statement
+      type: float
+      unit: CNY
+    - name: total_equity
+      chinese: 股东权益
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: operating_cash_flow
+      chinese: 经营活动现金流净额
+      source: cash_flow_statement
+      type: float
+      unit: CNY
+    - name: cost_of_revenue
+      chinese: 营业成本
+      source: income_statement
+      type: float
+      unit: CNY
+    - name: total_liabilities
+      chinese: 总负债
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: inventory
+      chinese: 存货
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: total_current_assets
+      chinese: 流动资产
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: total_current_liabilities
+      chinese: 流动负债
+      source: balance_sheet
+      type: float
+      unit: CNY
+    - name: depreciation_amortization
+      chinese: 折旧摊销
+      source: cash_flow_statement
+      type: float
+      unit: CNY
+    - name: capex
+      chinese: 资本开支
+      source: cash_flow_statement
+      type: float
+      unit: CNY
+    - name: report_period
+      chinese: 报告期
+      source: all
+      type: str
+      format: "YYYY-MM-DD"
+
+  cache:
+    strategy: SQLite-first, fetch on miss
+    ttl: 86400  # 24 hours for latest quarter
+    staleness_check: compare updated_at with current time
+
+# =============================================================================
+# 造假检测算法 (Step 1 — Circuit Breaker)
+# =============================================================================
+fraud_detection:
+  description: |
+    串行漏斗逻辑：三个审计算子全部通过才允许后续分析。
+    任一触发即熔断，终止所有健康度计算。
+
+  test_1_interest_anomaly:
+    name: 利息收支异常 (Interest Income Anomaly)
+    description: 账面现金巨大但利息收入极低，暗示现金虚构或被占用
+    inputs: [monetary_funds, interest_income]
+    formula: implied_yield = interest_income / monetary_funds
+    threshold: 0.005  # 0.5%
+    flag_condition: implied_yield < threshold
+    output:
+      passed: bool
+      implied_yield: float
+      threshold: float  # always 0.005
+    edge_cases:
+      - condition: monetary_funds == 0
+        behavior: skip (mark N/A, do not fail)
+      - condition: interest_income < 0
+        behavior: flag immediately (negative interest income is abnormal)
+      - condition: monetary_funds < 0
+        behavior: skip (mark N/A, invalid data)
+
+  test_2_revenue_receivable_divergence:
+    name: 收现背离 (Revenue-Receivable Divergence)
+    description: 应收增速远超营收增速，暗示虚假销售
+    inputs: [accounts_receivable_current, accounts_receivable_previous, revenue_current, revenue_previous]
+    formula: |
+      ar_growth = (ar_current - ar_previous) / ar_previous
+      rev_growth = (rev_current - rev_previous) / rev_previous
+      divergence_ratio = ar_growth / rev_growth
+    threshold: 2.0  # AR growing 2x faster than revenue
+    flag_condition: divergence_ratio > threshold
+    output:
+      passed: bool
+      ar_growth: float
+      rev_growth: float
+      divergence_ratio: float
+      threshold: float  # always 2.0
+    edge_cases:
+      - condition: rev_growth <= 0 AND ar_growth > 0
+        behavior: flag (revenue shrinking but AR growing)
+      - condition: rev_growth == 0
+        behavior: flag if ar_growth > 0.1, else skip
+      - condition: both negative
+        behavior: skip (both shrinking, not this pattern)
+      - condition: ar_previous == 0
+        behavior: skip (no baseline)
+
+  test_3_high_cash_high_debt:
+    name: 存贷双高 (High Cash + High Debt)
+    description: 同时持有巨额现金和巨额有息负债，暗示资金挪用
+    inputs: [monetary_funds, short_term_borrowing, long_term_borrowing, bonds_payable, total_assets, interest_expense]
+    formula: |
+      interest_bearing_debt = short_term_borrowing + long_term_borrowing + bonds_payable
+      ratio = (monetary_funds + interest_bearing_debt) / total_assets
+      debt_cost = interest_expense / interest_bearing_debt
+    thresholds:
+      ratio: 0.6
+      debt_cost: 0.04  # 4%
+    flag_condition: ratio > 0.6 AND debt_cost > 0.04
+    output:
+      passed: bool
+      cash_debt_ratio: float
+      debt_cost: float
+      thresholds:
+        ratio: float  # always 0.6
+        debt_cost: float  # always 0.04
+    edge_cases:
+      - condition: interest_bearing_debt == 0
+        behavior: pass (no debt = no anomaly)
+      - condition: total_assets == 0
+        behavior: error state, skip entire analysis
+
+  circuit_breaker:
+    logic: ANY test fails → tripped = True → halt Step 2
+    output:
+      tripped: bool
+      tests: list[TestResult]  # all 3 test results
+      failed_tests: list[TestResult]  # only failed ones
+
+# =============================================================================
+# 健康度画像 (Step 2 — Conditional)
+# =============================================================================
+health_profile:
+  description: 仅在 circuit_breaker.tripped == False 时执行
+  precondition: all fraud tests passed
+
+  dupont_analysis:
+    name: 杜邦分析 (DuPont Analysis)
+    description: ROE 分解为三个驱动因子
+    inputs: [net_profit, revenue, total_assets, total_equity]
+    formulas:
+      net_margin: net_profit / revenue
+      asset_turnover: revenue / total_assets
+      equity_multiplier: total_assets / total_equity
+      roe: net_margin * asset_turnover * equity_multiplier
+    output:
+      roe: float
+      net_margin: float
+      asset_turnover: float
+      equity_multiplier: float
+    edge_cases:
+      - condition: revenue == 0
+        behavior: net_margin = 0, asset_turnover = 0
+      - condition: total_equity == 0
+        behavior: error state, skip DuPont
+      - condition: total_assets == 0
+        behavior: error state, skip DuPont
+
+  cash_flow_quality:
+    name: 现金流质量 (Cash Flow Quality)
+    description: 经营现金流与净利润的比值
+    inputs: [operating_cash_flow, net_profit]
+    formula: ocf_ratio = operating_cash_flow / net_profit
+    output:
+      ocf_ratio: float
+      quality: enum[healthy, moderate, warning]
+    quality_thresholds:
+      healthy: "> 1.0"
+      moderate: "0.5 ~ 1.0"
+      warning: "< 0.5"
+    edge_cases:
+      - condition: net_profit == 0
+        behavior: skip ratio, report N/A
+      - condition: net_profit < 0
+        behavior: skip ratio (loss-making company), report N/A
+      - condition: operating_cash_flow < 0 AND net_profit > 0
+        behavior: ratio negative, quality = warning
+
+# =============================================================================
+# 公共接口 (Public API)
+# =============================================================================
+api:
+  financial_fetcher:
+    module: financial_fetcher.py
+    functions:
+      fetch_financial_data:
+        signature: "(stock_code: str, years: int = 5) -> pd.DataFrame"
+        description: 获取指定股票的财务数据，优先从 SQLite 读取，缺失则从 AKShare 拉取
+        returns: DataFrame with 20 key fields × N quarters
+        raises:
+          - ValueError: invalid stock code
+          - ConnectionError: AKShare API failure after retries
+
+      init_db:
+        signature: "() -> None"
+        description: 初始化 SQLite 数据库和表结构
+        idempotent: true
+
+  financial_analyzer:
+    module: financial_analyzer.py
+    functions:
+      fraud_scan:
+        signature: "(df: pd.DataFrame) -> dict"
+        description: 运行三个造假检测算子，返回断路器结果
+        returns: |
+          {
+            "tripped": bool,
+            "tests": [
+              {"name": str, "passed": bool, "metrics": dict},
+              ...
+            ],
+            "failed_tests": [...]
+          }
+        precondition: df contains at least 2 consecutive quarters
+
+      health_profile:
+        signature: "(df: pd.DataFrame) -> dict"
+        description: 运行杜邦分析和现金流质量评估
+        returns: |
+          {
+            "dupont": {"roe": float, "net_margin": float, "asset_turnover": float, "equity_multiplier": float},
+            "cash_flow": {"ocf_ratio": float, "quality": str}
+          }
+        precondition: fraud_scan passed (caller must verify)
+
+      analyze:
+        signature: "(stock_code: str) -> dict"
+        description: 完整分析入口：fetch → fraud_scan → health_profile(if passed)
+        returns: |
+          {
+            "stock_code": str,
+            "report_date": str,
+            "fraud_scan": {...},
+            "health_profile": {...} | null
+          }
+
+# =============================================================================
+# 测试规范
+# =============================================================================
+testing:
+  unit_tests:
+    fraud_detection:
+      test_interest_anomaly:
+        - name: test_normal_yield_passes
+          input: { monetary_funds: 180e9, interest_income: 3.8e9 }
+          expected: { passed: true, implied_yield: 0.0211 }
+
+        - name: test_low_yield_fails
+          input: { monetary_funds: 80e9, interest_income: 0.23e9 }
+          expected: { passed: false, implied_yield: 0.0029 }
+
+        - name: test_zero_cash_skips
+          input: { monetary_funds: 0, interest_income: 100 }
+          expected: { passed: true, skipped: true }
+
+        - name: test_negative_interest_flags
+          input: { monetary_funds: 50e9, interest_income: -1e6 }
+          expected: { passed: false }
+
+        - name: test_negative_cash_skips
+          input: { monetary_funds: -1e9, interest_income: 1e6 }
+          expected: { passed: true, skipped: true }
+
+      test_revenue_receivable_divergence:
+        - name: test_normal_divergence_passes
+          input: { ar_current: 2.8e9, ar_previous: 2.67e9, rev_current: 145e9, rev_previous: 126e9 }
+          expected: { passed: true }
+
+        - name: test_high_divergence_fails
+          input: { ar_current: 15e9, ar_previous: 10.3e9, rev_current: 30e9, rev_previous: 26.3e9 }
+          expected: { passed: false, divergence_ratio: "> 2.0" }
+
+        - name: test_revenue_shrinking_ar_growing_fails
+          input: { ar_current: 5e9, ar_previous: 4e9, rev_current: 20e9, rev_previous: 22e9 }
+          expected: { passed: false }
+
+        - name: test_both_shrinking_skips
+          input: { ar_current: 3e9, ar_previous: 4e9, rev_current: 18e9, rev_previous: 22e9 }
+          expected: { passed: true, skipped: true }
+
+        - name: test_zero_revenue_growth_ar_growing_flags
+          input: { ar_current: 5e9, ar_previous: 4e9, rev_current: 20e9, rev_previous: 20e9 }
+          expected: { passed: false }
+
+        - name: test_zero_ar_previous_skips
+          input: { ar_current: 1e9, ar_previous: 0, rev_current: 10e9, rev_previous: 8e9 }
+          expected: { passed: true, skipped: true }
+
+      test_high_cash_high_debt:
+        - name: test_no_debt_passes
+          input: { monetary_funds: 180e9, short_term: 0, long_term: 0, bonds: 0, total_assets: 280e9, interest_expense: 0 }
+          expected: { passed: true }
+
+        - name: test_high_ratio_high_cost_fails
+          input: { monetary_funds: 80e9, short_term: 20e9, long_term: 30e9, bonds: 10e9, total_assets: 120e9, interest_expense: 3.5e9 }
+          expected: { passed: false, cash_debt_ratio: 1.17, debt_cost: 0.058 }
+
+        - name: test_high_ratio_low_cost_passes
+          input: { monetary_funds: 50e9, short_term: 10e9, long_term: 5e9, bonds: 0, total_assets: 80e9, interest_expense: 0.3e9 }
+          expected: { passed: true }
+
+        - name: test_zero_total_assets_errors
+          input: { monetary_funds: 10e9, short_term: 5e9, long_term: 0, bonds: 0, total_assets: 0, interest_expense: 0 }
+          expected: { error: true }
+
+      test_circuit_breaker:
+        - name: test_all_pass_not_tripped
+          setup: all 3 tests return passed=true
+          expected: { tripped: false, failed_tests: [] }
+
+        - name: test_one_fail_tripped
+          setup: test_1 fails, test_2 and test_3 pass
+          expected: { tripped: true, failed_tests: ["interest_anomaly"] }
+
+        - name: test_all_fail_tripped
+          setup: all 3 tests fail
+          expected: { tripped: true, failed_tests: ["interest_anomaly", "revenue_receivable", "cash_debt"] }
+
+    health_profile:
+      test_dupont:
+        - name: test_normal_roe_decomposition
+          input: { net_profit: 74e9, revenue: 145e9, total_assets: 280e9, total_equity: 210e9 }
+          expected: { roe: 0.352, net_margin: 0.510, asset_turnover: 0.518, equity_multiplier: 1.333 }
+          tolerance: 0.01
+
+        - name: test_zero_revenue
+          input: { net_profit: 0, revenue: 0, total_assets: 100e9, total_equity: 50e9 }
+          expected: { net_margin: 0, asset_turnover: 0, roe: 0 }
+
+        - name: test_zero_equity_errors
+          input: { net_profit: 10e9, revenue: 50e9, total_assets: 100e9, total_equity: 0 }
+          expected: { error: true }
+
+      test_cash_flow_quality:
+        - name: test_healthy_ratio
+          input: { operating_cash_flow: 85e9, net_profit: 74e9 }
+          expected: { ocf_ratio: 1.149, quality: "healthy" }
+
+        - name: test_moderate_ratio
+          input: { operating_cash_flow: 40e9, net_profit: 60e9 }
+          expected: { ocf_ratio: 0.667, quality: "moderate" }
+
+        - name: test_warning_ratio
+          input: { operating_cash_flow: 10e9, net_profit: 50e9 }
+          expected: { ocf_ratio: 0.2, quality: "warning" }
+
+        - name: test_negative_ocf_warning
+          input: { operating_cash_flow: -5e9, net_profit: 30e9 }
+          expected: { ocf_ratio: -0.167, quality: "warning" }
+
+        - name: test_zero_profit_skips
+          input: { operating_cash_flow: 10e9, net_profit: 0 }
+          expected: { skipped: true }
+
+        - name: test_negative_profit_skips
+          input: { operating_cash_flow: 10e9, net_profit: -5e9 }
+          expected: { skipped: true }
+
+  integration_tests:
+    - name: test_analyze_end_to_end_pass
+      description: 完整链路 fetch→scan→profile，全部通过的场景
+      stock_code: "600519"
+      mock: true  # mock AKShare calls
+      expected: fraud_scan.tripped == false, health_profile != null
+
+    - name: test_analyze_end_to_end_fail
+      description: 完整链路 fetch→scan→halt，造假触发的场景
+      stock_code: "mock_fraud_company"
+      mock: true
+      expected: fraud_scan.tripped == true, health_profile == null
+
+    - name: test_sqlite_upsert_idempotent
+      description: 同一 stock+date 多次写入不产生重复行
+      expected: row count unchanged after second insert
+
+    - name: test_cache_hit_avoids_api_call
+      description: SQLite 有数据且未过期时不调用 AKShare
+      expected: AKShare not called
+
+    - name: test_stale_cache_triggers_refresh
+      description: SQLite 数据过期时重新从 AKShare 拉取
+      expected: AKShare called, SQLite updated
+
+  edge_cases:
+    - insufficient_quarters: less than 2 quarters of data
+    - delisted_stock: stock code exists but no recent data
+    - st_stock: ST stock with abnormal financials
+    - ipo_company: only 1-2 quarters of history
+    - missing_fields: some of 20 fields are null in AKShare response
+
+# =============================================================================
+# UI 规范
+# =============================================================================
+ui:
+  file: workUI.html
+  framework: Tailwind CSS (CDN) + vanilla JS
+
+  tab_system:
+    tabs: ["VPU 分析", "财务分析"]
+    position: right-aligned in Analysis Card toolbar
+    active_style: "bg-primary text-white rounded-full px-3 py-1 text-xs font-bold"
+    inactive_style: "text-slate-500 hover:bg-primary/10 rounded-full px-3 py-1 text-xs font-bold"
+    switching: JS toggles hidden class on content divs
+
+  financial_tab:
+    fraud_scan_section:
+      layout: 3-column grid (responsive, stacks on mobile)
+      card_style: left-border-4 color accent (green=pass, red=fail)
+      card_content: test name, metric value, threshold, status badge, one-line explanation
+
+    gate_banner:
+      pass:
+        background: "bg-emerald-950/30"
+        border: "border-emerald-500/30"
+        icon: "✅"
+        text: "财务诚信验证通过 — 健康度分析已解锁"
+      fail:
+        background: "bg-red-950/50"
+        border: "border-red-500/30"
+        icon: "⛔"
+        text: "财务风险预警 — {test_name} 异常，健康度分析已终止"
+
+    health_section:
+      visibility: only shown when gate_banner.pass
+      locked_state: "bg-slate-900/50 text-slate-500 with lock icon overlay"
+      subsections:
+        - dupont: ROE decomposition (4 metric cards + formula)
+        - cash_flow: OCF/净利润 ratio with quality badge
+
+    demo_toggle:
+      description: hidden button to switch pass/fail mock states
+      position: bottom-right, small text
+      label: "Toggle Demo State"
+
+  color_grammar:
+    pass: { bg: "emerald-950/20", border: "emerald-500", text: "emerald-400" }
+    fail: { bg: "red-950/20", border: "red-500", text: "red-400" }
+    locked: { bg: "slate-900/50", border: "slate-700", text: "slate-500" }
+    healthy: { text: "emerald-400" }
+    moderate: { text: "amber-400" }
+    warning: { text: "red-400" }
