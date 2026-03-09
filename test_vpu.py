@@ -13,6 +13,10 @@ import streamlit_echarts
 
 streamlit_echarts.JsCode = MockJsCode
 
+import data_fetcher
+
+data_fetcher.cache.ttl_seconds = 0
+
 
 import math
 import os
