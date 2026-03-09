@@ -1,0 +1,586 @@
+# Stock VPU - 股票流动性深度指标分析系统规范
+# Specification-Driven Development (SSD) + Test-Driven Development (TDD)
+# Version: 1.0.0
+# Date: 2026-03-09
+
+metadata:
+  name: Stock VPU Analysis System
+  description: 基于单位价差成交量(VPU)的股票流动性深度指标分析工具
+  version: 1.0.0
+  author: Stock VPU Team
+  license: MIT
+
+  tech_stack:
+    language: Python 3.10+
+    data_source: AKShare (primary), baostock (backup)
+    data_processing: pandas + numpy
+    visualization: Streamlit + Apache ECharts
+    api_framework: FastAPI
+    caching: File-based pickle cache with TTL
+    ci_cd: GitHub Actions
+
+# =============================================================================
+# 核心指标定义
+# =============================================================================
+indicators:
+  vpu:
+    name: Volume Per Price Unit
+    description: 单位价差成交量，推动股价变动一个最小计价单位所需的平均成交量
+    formula: |
+      VPU = 成交量（手） / max(1, ceil(前复权价差 / PRICE_UNIT))
+    interpretation:
+      high: 市场"厚"，流动性好，价格不易被推动
+      low: 市场"薄"，流动性差，价格容易被推动
+    use_case: 单只股票的历史纵向比较
+    price_adjustment: forward  # 前复权
+
+  apu:
+    name: Amount Per Price Unit
+    description: 单位价差成交额版本，用于跨股票横向比较
+    formula: |
+      APU = 成交额（元） / max(1, ceil(未复权价差 / PRICE_UNIT))
+    use_case: 跨股票的横向比较
+    price_adjustment: none  # 未复权
+
+  directional:
+    vpu_up:
+      name: VPU Up
+      description: 上涨单元平均VPU，反映上方抛压
+      condition: 收盘价 > 开盘价
+      interpretation:
+        high: 上方抛压重，上涨困难
+        low: 上方阻力小，上涨容易
+
+    vpu_down:
+      name: VPU Down
+      description: 下跌单元平均VPU，反映下方支撑
+      condition: 收盘价 < 开盘价
+      interpretation:
+        high: 下方支撑强，下跌困难
+        low: 下方支撑弱，下跌容易
+
+# =============================================================================
+# 配置参数
+# =============================================================================
+configuration:
+  price_unit:
+    description: 最小价差单位（元）
+    type: float
+    default: 0.05
+    range: [0.01, 0.10]
+    constraint: must_be_positive
+
+  trim_ratio:
+    description: 截尾比例（上下各截掉的比例）
+    type: float
+    default: 0.25
+    range: [0.0, 0.40]
+    constraint: "0 <= trim_ratio < 0.5"
+
+  min_valid_units:
+    description: 每日最少有效单元数，不足则该日作废
+    type: integer
+    default: 10
+    range: [5, 20]
+    constraint: must_be_positive_integer
+
+  min_price_spread:
+    description: 最小有效价差（元），低于此值的单元剔除
+    type: float
+    default: 0.03
+    range: [0.01, 0.05]
+    constraint: must_be_positive
+
+  ma_periods:
+    description: 移动平均周期列表
+    type: list[int]
+    default: [5, 10]
+    constraint: all_elements_positive
+
+  skip_first_last:
+    description: 是否剔除首尾5分钟单元（开盘/收盘竞价）
+    type: boolean
+    default: true
+
+  enable_direction:
+    description: 是否计算方向性指标（VPU_Up / VPU_Down）
+    type: boolean
+    default: true
+
+# =============================================================================
+# 数据验证规则
+# =============================================================================
+validation:
+  stock_code:
+    description: A股股票代码格式验证
+    pattern: "^(sh|sz)?(600|601|603|000|001|002|003|300|301|688)[0-9]{3}$"
+    markets:
+      main_board:
+        prefixes: ["600", "601", "603", "000", "001", "002", "003"]
+        limit_threshold: 0.098
+      chi_next:
+        prefixes: ["300", "301"]
+        limit_threshold: 0.198
+      star_market:
+        prefixes: ["688"]
+        limit_threshold: 0.198
+      st_stock:
+        limit_threshold: 0.048
+
+  date_range:
+    description: 日期范围验证
+    constraints:
+      - start_date <= end_date
+      - date_format: "YYYY-MM-DD"
+      - max_range_days: 365
+
+  dataframe:
+    description: 数据框完整性验证
+    required_columns:
+      - date
+      - open
+      - high
+      - low
+      - close
+      - volume
+      - amount
+    column_types:
+      date: datetime
+      open: numeric
+      high: numeric
+      low: numeric
+      close: numeric
+      volume: numeric
+      amount: numeric
+
+# =============================================================================
+# 数据清洗规则（按优先级执行）
+# =============================================================================
+data_cleaning:
+  rules:
+    r1_limit_days:
+      name: 涨跌停日剔除
+      priority: 1
+      condition: |
+        (最高价 - 昨收) / 昨收 > threshold OR
+        (最低价 - 昨收) / 昨收 < -threshold
+      reason: 成交行为异常，流动性指标无意义
+      threshold_source: market_type
+
+    r2_first_last_units:
+      name: 首尾单元剔除
+      priority: 2
+      condition: time in ["09:30", "09:35", "14:55", "15:00"]
+      reason: 集合竞价/尾盘抢单导致数据失真
+      units_removed: 4  # 每日理论48个单元，剔除后剩46个
+
+    r3_zero_spread:
+      name: 零价差单元剔除
+      priority: 3
+      condition: 最高价 == 最低价
+      reason: 除零风险，且横盘无价格发现意义
+
+    r4_low_spread:
+      name: 极低振幅单元剔除
+      priority: 4
+      condition: 价差 < MIN_PRICE_SPREAD
+      reason: 波动过小导致VPU异常膨胀，数据噪声大于信号
+
+  insufficient_data:
+    description: 数据不足判定
+    condition: 有效单元数 < MIN_VALID_UNITS
+    action: 标记该日为"数据不足"，不参与指标计算
+
+# =============================================================================
+# 计算流程
+# =============================================================================
+calculation_flow:
+  step_1_fetch:
+    name: 数据采集
+    input:
+      - stock_code: string, validated
+      - start_date: string, YYYY-MM-DD
+      - end_date: string, YYYY-MM-DD
+    output: raw_5min_kline_dataframe
+    data_source: AKShare stock_zh_a_minute
+    cache: true
+    ttl_seconds: 3600
+
+  step_2_clean:
+    name: 数据清洗
+    input: raw_5min_kline_dataframe
+    output: cleaned_dataframe
+    rules_reference: data_cleaning.rules
+
+  step_3_unit_calculation:
+    name: 单元指标计算
+    input: cleaned_dataframe
+    output: unit_level_dataframe
+    calculations:
+      - adj_spread: adj_high - adj_low
+      - raw_spread: high - low
+      - adj_units: ceil(adj_spread / PRICE_UNIT).clip(lower=1)
+      - raw_units: ceil(raw_spread / PRICE_UNIT).clip(lower=1)
+      - vpu_i: volume / adj_units
+      - apu_i: amount / raw_units
+      - direction: up if close > open, down if close < open, neutral otherwise
+
+  step_4_daily_aggregation:
+    name: 日级聚合（截尾均值）
+    input: unit_level_dataframe
+    output: daily_dataframe
+    aggregation:
+      vpu: trimmed_mean(vpu_i, TRIM_RATIO)
+      apu: trimmed_mean(apu_i, TRIM_RATIO)
+      vpu_up: trimmed_mean(vpu_i where direction=up, TRIM_RATIO) if count >= 3
+      vpu_down: trimmed_mean(vpu_i where direction=down, TRIM_RATIO) if count >= 3
+
+  step_5_moving_average:
+    name: 移动平均计算
+    input: daily_dataframe
+    output: final_dataframe
+    calculations:
+      - ma5: rolling_mean(vpu, window=5, min_periods=1)
+      - ma10: rolling_mean(vpu, window=10, min_periods=1)
+
+# =============================================================================
+# 功能模块规范
+# =============================================================================
+modules:
+  calculator:
+    file: calculator.py
+    responsibility: 核心VPU/APU算法，数据清洗，向量化计算
+    functions:
+      - name: clean_data
+        input: [df, config, code, is_st]
+        output: cleaned_df
+        test_coverage: required
+
+      - name: calculate_unit_vpu
+        input: [df, config]
+        output: unit_level_df
+        test_coverage: required
+
+      - name: aggregate_daily
+        input: [df, config, code, is_st]
+        output: daily_df
+        test_coverage: required
+
+      - name: calculate_moving_averages
+        input: [df, config]
+        output: df_with_ma
+        test_coverage: required
+
+      - name: calculate_vpu
+        input: [df, config, code, is_st]
+        output: final_df
+        test_coverage: required
+
+  data_fetcher:
+    file: data_fetcher.py
+    responsibility: 封装AKShare，处理重试与网络异常
+    functions:
+      - name: fetch_5min_kline
+        input: [code, start_date, end_date]
+        output: dataframe
+        retry_policy:
+          max_retries: 3
+          backoff: 5 seconds
+          interval: 2 seconds
+        caching: true
+        test_coverage: required
+
+  data_validator:
+    file: data_validator.py
+    responsibility: 股票代码校验、数据框完整性验证
+    functions:
+      - name: validate_stock_code
+        input: [code]
+        output: boolean
+        test_coverage: required
+
+      - name: validate_date_range
+        input: [start_date, end_date]
+        output: boolean
+        test_coverage: required
+
+      - name: validate_dataframe
+        input: [df]
+        output: boolean
+        test_coverage: required
+
+  cache_manager:
+    file: cache_manager.py
+    responsibility: 基于文件系统的持久化缓存，支持TTL
+    functions:
+      - name: get
+        input: [key]
+        output: cached_value or None
+        test_coverage: required
+
+      - name: set
+        input: [key, value]
+        output: void
+        test_coverage: required
+
+      - name: get_cache_key
+        input: [kwargs]
+        output: hash_string
+        test_coverage: required
+
+  export_manager:
+    file: export_manager.py
+    responsibility: 支持多格式导出
+    supported_formats: [csv, xlsx, json, parquet, html]
+    functions:
+      - name: export
+        input: [df, format, path]
+        output: file_path
+        test_coverage: required
+
+  visualizer:
+    file: visualizer.py
+    responsibility: 基础ECharts联动配置生成，Matplotlib静态导出
+    functions:
+      - name: export_png
+        input: [df, path, code]
+        output: file_path
+        test_coverage: optional
+
+      - name: export_csv
+        input: [df, path]
+        output: file_path
+        test_coverage: optional
+
+  advanced_visualizer:
+    file: advanced_visualizer.py
+    responsibility: 多股对比图、相关性热力图
+    test_coverage: optional
+
+  batch_processor:
+    file: batch_processor.py
+    responsibility: 支持大规模股票池的并行/串行批量处理
+    test_coverage: required
+
+  technical_analyzer:
+    file: technical_analyzer.py
+    responsibility: 提供RSI, MACD, Bollinger Bands等辅助指标
+    indicators: [RSI, MACD, Bollinger_Bands]
+    test_coverage: optional
+
+  plugin_system:
+    file: plugin_system.py
+    responsibility: 基于插件的扩展机制
+    test_coverage: optional
+
+# =============================================================================
+# 接口层规范
+# =============================================================================
+interfaces:
+  cli:
+    file: main.py
+    description: 命令行工具
+    arguments:
+      - name: code
+        type: string
+        required: true
+        description: 股票代码或逗号分隔的多个代码
+
+      - name: start
+        type: string
+        default: 30 days ago
+        description: 开始日期 (YYYY-MM-DD)
+
+      - name: end
+        type: string
+        default: today
+        description: 结束日期 (YYYY-MM-DD)
+
+      - name: output
+        type: choice
+        choices: [summary, png, csv, xlsx, json, parquet, all]
+        default: summary
+        description: 输出模式
+
+      - name: output_dir
+        type: string
+        default: ./output
+        description: 输出目录
+
+      - name: price_unit
+        type: float
+        default: 0.05
+        description: 最小价差单位
+
+      - name: trim_ratio
+        type: float
+        default: 0.25
+        description: 截尾比例
+
+  web_ui:
+    file: app.py
+    framework: Streamlit
+    description: 交互式网页仪表盘
+    features:
+      - 股票代码输入
+      - 时间范围选择
+      - 参数实时调节（滑动条）
+      - 交互式K线联动图
+      - 数据导出
+    cache_ttl: 3600 seconds
+
+  api:
+    file: api_server.py
+    framework: FastAPI
+    description: RESTful API服务
+    endpoints:
+      - path: /api/v1/calculate
+        method: POST
+        input:
+          code: string
+          start_date: string (optional)
+          end_date: string (optional)
+        output: JSON with vpu data
+        test_coverage: required
+
+# =============================================================================
+# 可视化规范
+# =============================================================================
+visualization:
+  theme: dark_quant_terminal
+  colors:
+    background: "#0e1117"
+    chart_background: transparent
+    up_candle: "#ff4b4b"
+    down_candle: "#00c878"
+    vpu_up_bar: "#ff4b4b → #ff8a8a gradient"
+    vpu_down_bar: "#00c878 → #66e0b0 gradient"
+    apu_bar: "#409eff"
+    title_text: "#e0e0e0"
+    axis_label: "#aaaaaa"
+    grid_line: "rgba(255,255,255,0.06)"
+    tooltip_bg: "rgba(20,20,30,0.9)"
+
+  layout:
+    type: dual_grid
+    upper_grid:
+      height_percent: 60
+      components:
+        - candlestick
+        - ma5_line
+        - ma10_line
+    lower_grid:
+      height_percent: 30
+      components:
+        - vpu_up_bar
+        - vpu_down_bar
+    datazoom:
+      position: bottom
+      controls: both_grids
+
+  interactivity:
+    - axis_sync: true
+    - tooltip_linked: true
+    - zoom_pan: true
+
+# =============================================================================
+# 测试规范
+# =============================================================================
+testing:
+  framework: pytest
+  coverage_target: 80%
+  test_categories:
+    unit_tests:
+      - calculator functions
+      - data_validator functions
+      - cache_manager functions
+      - export_manager functions
+
+    integration_tests:
+      - end_to_end_calculation
+      - api_endpoints
+      - data_fetch_with_mock
+
+    edge_cases:
+      - empty_dataframe
+      - single_day_data
+      - all_limit_days
+      - insufficient_units
+      - invalid_stock_code
+      - network_failure
+
+  ci:
+    platform: GitHub Actions
+    python_versions: ["3.10", "3.11", "3.12"]
+    triggers: [push, pull_request]
+
+# =============================================================================
+# 部署规范
+# =============================================================================
+deployment:
+  local:
+    commands:
+      - pip install -r requirements.txt
+      - streamlit run app.py
+      - python main.py <code>
+      - python api_server.py
+
+  docker:
+    files:
+      - Dockerfile
+      - docker-compose.yml
+    services:
+      - web: Streamlit UI
+      - api: FastAPI server
+    command: docker-compose up -d
+
+# =============================================================================
+# 验收标准 (Acceptance Criteria)
+# =============================================================================
+acceptance_criteria:
+  functional:
+    - 能够正确计算VPU、APU、VPU_Up、VPU_Down指标
+    - 能够正确处理涨跌停日的数据剔除
+    - 能够正确识别主板/创业板/科创板/ST股的涨跌停阈值
+    - 缓存机制能够减少重复API调用
+    - 支持CSV、Excel、JSON、Parquet、HTML导出
+
+  performance:
+    - 单次股票查询响应时间 < 5秒（含数据获取）
+    - 缓存命中时响应时间 < 1秒
+    - 支持并发查询（通过API）
+
+  reliability:
+    - API调用失败时自动重试3次
+    - 无效股票代码在入口处拦截
+    - 数据不足时给出明确提示
+
+  usability:
+    - CLI提供清晰的帮助信息
+    - Web UI提供参数说明工具提示
+    - 图表支持交互式缩放和平移
+
+# =============================================================================
+# 待改进项 (基于TODO.md)
+# =============================================================================
+improvements:
+  completed:
+    - 增强数据验证层
+    - 增强日志系统
+    - 增强缓存机制
+    - 性能优化（向量化计算）
+    - 批量处理功能
+    - 高级可视化
+    - 技术分析指标
+    - 数据导出增强
+    - 插件架构
+    - REST API
+    - Docker化
+    - CI/CD流水线
+
+  potential_future:
+    - 实时数据流支持
+    - 机器学习预测模型
+    - 多因子分析
+    - 告警系统
+    - 用户认证与权限
