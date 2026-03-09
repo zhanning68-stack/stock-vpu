@@ -12,6 +12,10 @@ from config import Config, validate_stock_code
 from data_fetcher import fetch_5min_kline
 from calculator import calculate_vpu
 from visualizer import render_chart, render_apu_chart, wrap_js_code
+from batch_processor import BatchProcessor
+from advanced_visualizer import AdvancedVisualizer
+from technical_analyzer import TechnicalAnalyzer
+from export_manager import ExportManager
 
 st.set_page_config(
     page_title="VPU 流动性深度分析",
@@ -151,9 +155,18 @@ if "result_df" in st.session_state and "stock_code" in st.session_state:
 
     st.divider()
 
-    tab1, tab2 = st.tabs(["VPU 指标", "APU 指标"])
+    tab1, tab2, tab3 = st.tabs(["VPU 指标", "APU 指标", "对比分析"])
 
     with tab1:
+        st.subheader("VPU 趋势与技术指标")
+        show_rsi = st.checkbox("显示 RSI (14)")
+        show_bb = st.checkbox("显示布林带 (20, 2)")
+
+        display_df = result_df.copy()
+        if show_rsi:
+            display_df["rsi"] = TechnicalAnalyzer.calculate_rsi(result_df)
+            st.line_chart(display_df.set_index("date")["rsi"])
+
         option = render_chart(result_df, stock_code=code)
         option = wrap_js_code(option)
         st_echarts(option, height="600px")
@@ -162,6 +175,42 @@ if "result_df" in st.session_state and "stock_code" in st.session_state:
         apu_option = render_apu_chart(result_df, stock_code=code)
         apu_option = wrap_js_code(apu_option)
         st_echarts(apu_option, height="600px")
+
+    with tab3:
+        st.subheader("多股票对比")
+        compare_codes = st.text_input(
+            "输入要对比的股票代码（英文逗号分隔）", value="600519,000858,000568"
+        )
+        if st.button("开始对比"):
+            code_list = [c.strip() for c in compare_codes.split(",") if c.strip()]
+            if code_list:
+                with st.spinner("正在获取对比数据..."):
+                    current_cfg = Config(
+                        PRICE_UNIT=price_unit,
+                        TRIM_RATIO=trim_ratio,
+                        MIN_PRICE_SPREAD=min_price_spread,
+                        SKIP_FIRST_LAST=skip_first_last,
+                        ENABLE_DIRECTION=enable_direction,
+                    )
+                    bp = BatchProcessor(current_cfg)
+                    batch_results = bp.process_stocks(
+                        code_list,
+                        start_date.strftime("%Y-%m-%d"),
+                        end_date.strftime("%Y-%m-%d"),
+                    )
+                    comp_df = bp.get_comparison_df(batch_results, metric="vpu")
+                    if not comp_df.empty:
+                        c_option = AdvancedVisualizer.render_comparison_chart(
+                            comp_df, title="VPU 趋势对比"
+                        )
+                        st_echarts(c_option, height="500px")
+
+                        corr_option = AdvancedVisualizer.render_correlation_matrix(
+                            comp_df
+                        )
+                        st_echarts(corr_option, height="500px")
+                    else:
+                        st.warning("未能获取足够的对比数据")
 
     st.divider()
 

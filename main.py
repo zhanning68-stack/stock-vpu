@@ -9,11 +9,15 @@ from config import Config, validate_stock_code
 from data_fetcher import fetch_5min_kline
 from calculator import calculate_vpu
 from visualizer import export_png, export_csv
+from batch_processor import BatchProcessor
+from export_manager import ExportManager
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="VPU Stock Liquidity Indicator CLI")
-    parser.add_argument("code", help="Stock code (e.g., 600519)")
+    parser.add_argument(
+        "code", help="Stock code or codes (comma separated, e.g., 600519,000858)"
+    )
     parser.add_argument(
         "-s",
         "--start",
@@ -32,7 +36,7 @@ def parse_args():
         "-o",
         "--output",
         type=str,
-        choices=["summary", "png", "csv", "all"],
+        choices=["summary", "png", "csv", "xlsx", "json", "parquet", "all"],
         default="summary",
         help="Output mode (default: summary)",
     )
@@ -73,61 +77,65 @@ def format_summary_table(result_df: pd.DataFrame) -> str:
 def main():
     args = parse_args()
 
-    if not validate_stock_code(args.code):
-        print(f"Error: Invalid stock code '{args.code}'")
-        print(
-            "Supported formats: 600xxx, 000xxx, 001xxx, 002xxx, 300xxx, 301xxx, 688xxx"
-        )
+    stock_codes = [c.strip() for c in args.code.split(",") if c.strip()]
+    valid_codes = []
+    for code in stock_codes:
+        if validate_stock_code(code):
+            valid_codes.append(code)
+        else:
+            print(f"Warning: Invalid stock code '{code}' ignored.")
+
+    if not valid_codes:
+        print("Error: No valid stock codes provided.")
         sys.exit(1)
 
     today = datetime.now().date()
     thirty_days_ago = today - timedelta(days=30)
-
     start_date = args.start if args.start else thirty_days_ago.strftime("%Y-%m-%d")
     end_date = args.end if args.end else today.strftime("%Y-%m-%d")
 
-    print(f"Fetching data for {args.code} from {start_date} to {end_date}...")
-    raw_df = fetch_5min_kline(args.code, start_date, end_date)
-
-    if raw_df.empty:
-        print(f"Error: No data fetched for {args.code}")
-        sys.exit(1)
-
     cfg = Config(PRICE_UNIT=args.price_unit, TRIM_RATIO=args.trim_ratio)
-    result_df = calculate_vpu(raw_df, cfg, code=args.code)
 
-    if result_df.empty:
-        print(f"Error: No valid data after calculation for {args.code}")
-        sys.exit(1)
+    for code in valid_codes:
+        print(f"\nProcessing {code} from {start_date} to {end_date}...")
+        raw_df = fetch_5min_kline(code, start_date, end_date)
 
-    trading_days = len(result_df)
-    print(f"\nStock Code: {args.code}")
-    print(f"Date Range: {start_date} to {end_date}")
-    print(f"Trading Days: {trading_days}")
-    print()
+        if raw_df.empty:
+            print(f"Error: No data fetched for {code}")
+            continue
 
-    if args.output in ["summary", "all"]:
-        print(format_summary_table(result_df))
-        print()
+        result_df = calculate_vpu(raw_df, cfg, code=code)
 
-    if args.output in ["png", "csv", "all"]:
-        os.makedirs(args.output_dir, exist_ok=True)
+        if result_df.empty:
+            print(f"Error: No valid data after calculation for {code}")
+            continue
 
-        end_date_clean = end_date.replace("-", "")
+        trading_days = len(result_df)
+        print(f"Stock Code: {code}")
+        print(f"Trading Days: {trading_days}")
 
-        if args.output in ["png", "all"]:
-            png_path = os.path.join(
-                args.output_dir, f"{args.code}_vpu_{end_date_clean}.png"
-            )
-            export_png(result_df, png_path, args.code)
-            print(f"PNG exported to: {png_path}")
+        if args.output in ["summary", "all"]:
+            print(format_summary_table(result_df))
 
-        if args.output in ["csv", "all"]:
-            csv_path = os.path.join(
-                args.output_dir, f"{args.code}_vpu_{end_date_clean}.csv"
-            )
-            export_csv(result_df, csv_path)
-            print(f"CSV exported to: {csv_path}")
+        if args.output != "summary":
+            os.makedirs(args.output_dir, exist_ok=True)
+            end_date_clean = end_date.replace("-", "")
+
+            if args.output in ["png", "all"]:
+                png_path = os.path.join(
+                    args.output_dir, f"{code}_vpu_{end_date_clean}.png"
+                )
+                export_png(result_df, png_path, code)
+                print(f"PNG exported to: {png_path}")
+
+            formats = ["csv", "xlsx", "json", "parquet"]
+            for fmt in formats:
+                if args.output == fmt or args.output == "all":
+                    out_path = os.path.join(
+                        args.output_dir, f"{code}_vpu_{end_date_clean}.{fmt}"
+                    )
+                    ExportManager.export(result_df, fmt, out_path)
+                    print(f"{fmt.upper()} exported to: {out_path}")
 
 
 if __name__ == "__main__":
