@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  stock-vpu:
+    build: .
+    ports:
+      - "8501:8501"
+      - "8000:8000"
+    volumes:
+      - ./cache:/app/cache
+      - ./logs:/app/logs
+    environment:
+      - TZ=Asia/Shanghai
+      - CACHE_TTL=24
+    restart: unless-stopped
